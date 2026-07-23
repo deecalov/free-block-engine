@@ -1,0 +1,70 @@
+{
+  "name": "free-block-engine",
+  "version": "2.0.0",
+  "description": "Zero-dependency visual block management system: draggable blocks, typed connections with arrows and labels, zoom/pan canvas, minimap, undo/redo, import/export.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/types/index.d.ts",
+  "unpkg": "./dist/free-block-engine.global.min.js",
+  "jsdelivr": "./dist/free-block-engine.global.min.js",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "npm run build:esm && npm run build:cjs && npm run build:global && npm run build:types",
+    "build:esm": "esbuild src/index.js --bundle --format=esm --outfile=dist/index.js",
+    "build:cjs": "esbuild src/index.js --bundle --format=cjs --outfile=dist/index.cjs",
+    "build:global": "esbuild src/index.js --bundle --format=iife --global-name=FreeBlockEngine --outfile=dist/free-block-engine.global.js && esbuild src/index.js --bundle --minify --format=iife --global-name=FreeBlockEngine --outfile=dist/free-block-engine.global.min.js",
+    "build:types": "tsc -p tsconfig.types.json",
+    "prepublishOnly": "npm run build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "dev": "node scripts/dev-server.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "keywords": [
+    "blocks",
+    "canvas",
+    "diagram",
+    "drag-and-drop",
+    "mind-map",
+    "graph",
+    "knowledge-graph",
+    "visual-editor",
+    "zero-dependency"
+  ],
+  "author": "Paul Deecalov",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deecalov/free-block-engine.git"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "esbuild": "^0.28.1",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.7.0",
+    "jsdom": "^29.1.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

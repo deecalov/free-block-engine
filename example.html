@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Free Block Engine — Demo</title>
+    <link rel="stylesheet" href="example.css" />
+  </head>
+  <body>
+    <div class="toolbar">
+      <button onclick="createNewBlock()">New Block</button>
+      <div class="link-type-selector">
+        <select id="linkTypeSelect" onchange="linkTypeChanged()">
+          <option value="single">&#8594; Single</option>
+          <option value="reverse">&#8592; Reverse</option>
+          <option value="double">&#8596; Double</option>
+        </select>
+        <button onclick="linkSelectedBlocks()">Link Selected</button>
+      </div>
+      <button onclick="arrangeBlocks()">Auto Arrange</button>
+      <div class="separator"></div>
+      <button id="undoBtn" onclick="undo()" disabled title="Ctrl+Z">&#8630; Undo</button>
+      <button id="redoBtn" onclick="redo()" disabled title="Ctrl+Y">&#8631; Redo</button>
+      <div class="separator"></div>
+      <div class="view-toggle">
+        <button id="freeViewBtn" class="active" onclick="setViewMode('free')">Free</button>
+        <button id="gridViewBtn" onclick="setViewMode('grid')">Grid</button>
+      </div>
+      <div class="zoom-controls">
+        <button onclick="zoomOut()" title="Zoom out (Ctrl+wheel)">&#8722;</button>
+        <span id="zoomLabel">100%</span>
+        <button onclick="zoomIn()" title="Zoom in (Ctrl+wheel)">+</button>
+        <button onclick="zoomFit()" title="Fit all blocks">Fit</button>
+      </div>
+      <div class="separator"></div>
+      <input type="text" id="searchInput" placeholder="Search blocks..." onkeyup="searchBlocks()" />
+      <div class="separator"></div>
+      <button onclick="exportData()">Export</button>
+      <button onclick="importData()">Import</button>
+      <input
+        type="file"
+        id="importFile"
+        style="display: none"
+        accept=".json"
+        onchange="handleImport(event)"
+      />
+      <label class="readonly-toggle">
+        <input type="checkbox" id="readOnlyToggle" onchange="toggleReadOnly()" /> Read-only
+      </label>
+      <div id="status"></div>
+    </div>
+
+    <div id="blocks-container"></div>
+
+    <div class="help-text">
+      <strong>Tips:</strong><br />
+      &bull; Click a connection line to edit its direction and label<br />
+      &bull; Drag empty canvas to lasso-select, Ctrl+click for multi-select<br />
+      &bull; Ctrl+wheel to zoom, Space+drag or middle mouse to pan<br />
+      &bull; Ctrl+Z / Ctrl+Y — undo / redo, Ctrl+D — duplicate, Delete — remove
+    </div>
+
+    <script src="dist/free-block-engine.global.js"></script>
+    <script src="example.js"></script>
+  </body>
+</html>
