@@ -14,10 +14,10 @@ by priority within each section.
 
 ## Bugs
 
-- [ ] `duplicateBlock()` assigns `copy.data` **after** `createBlock()` records the history snapshot (`src/blockEngine.js`). Undo → redo of a duplicate silently loses the custom `data`. Apply the data before recording, or record the copy as a batch of create + `setBlockData`.
-- [ ] Nested batches are broken: `History.beginBatch()` ignores an inner begin, but the first `endBatch()` closes the outer batch prematurely (`src/history.js`). Track batch depth so begin/end pairs can nest safely.
-- [ ] `historyLimit` is not propagated: `updateSettings({ historyLimit })` and snapshot import update `settings` but the existing `History` instance keeps its old limit (`src/blockEngine.js`).
-- [ ] Undo/redo of link operations emits only the internal `linksChanged` event (`_applyPairState`), so subscribers of `blocksLinked` / `blocksUnlinked` never hear about replayed changes. Either emit the semantic events during replay or promote `linksChanged` to the documented API.
+- [x] `duplicateBlock()` assigns `copy.data` **after** `createBlock()` records the history snapshot (`src/blockEngine.js`). Undo → redo of a duplicate silently loses the custom `data`. Fixed: the copy is recorded as a batch of create + `setBlockData`.
+- [x] Nested batches are broken: `History.beginBatch()` ignores an inner begin, but the first `endBatch()` closes the outer batch prematurely (`src/history.js`). Fixed: batches track nesting depth.
+- [x] `historyLimit` is not propagated: `updateSettings({ historyLimit })` and snapshot import update `settings` but the existing `History` instance keeps its old limit (`src/blockEngine.js`). Fixed via `History.setLimit()`.
+- [x] Undo/redo of link operations emits only the internal `linksChanged` event (`_applyPairState`), so subscribers of `blocksLinked` / `blocksUnlinked` never hear about replayed changes. Fixed: `linksChanged` is now part of the documented API (README + `docs/api.md`).
 
 ## API & developer experience
 

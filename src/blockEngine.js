@@ -244,7 +244,8 @@ export class BlockEngine {
   }
 
   /**
-   * Create a copy of a block (content, type, size and data; links are not copied).
+   * Create a copy of a block (content, type, size and data; links are not
+   * copied). Recorded as a single undo step, so redo restores the data too.
    * @param {string} id
    * @returns {Block|null}
    */
@@ -252,13 +253,16 @@ export class BlockEngine {
     const source = this.blocks.get(id);
     if (!source) return null;
     const offset = this.settings.gridSize * 2;
+    const data = JSON.parse(JSON.stringify(source.data ?? {}));
+    this.beginBatch('duplicateBlock');
     const copy = this.createBlock(
       source.content,
       source.type,
       { x: source.position.x + offset, y: source.position.y + offset },
       { ...source.size }
     );
-    copy.data = JSON.parse(JSON.stringify(source.data ?? {}));
+    this.setBlockData(copy.id, data);
+    this.endBatch();
     return copy;
   }
 
@@ -712,6 +716,7 @@ export class BlockEngine {
           this.settings[key] = data.settings[key];
         }
       }
+      this.history.setLimit(this.settings.historyLimit);
     }
 
     for (const raw of data.blocks) {
@@ -746,6 +751,7 @@ export class BlockEngine {
         this.settings[key] = partial[key];
       }
     }
+    this.history.setLimit(this.settings.historyLimit);
     this.emit('settingsUpdated', { ...this.settings });
     return { ...this.settings };
   }

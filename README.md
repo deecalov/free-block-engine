@@ -210,6 +210,7 @@ engine.on('blockRestored', (block) => {}); // undo of a delete
 engine.on('blocksLinked', ({ from, to, linkType, label }) => {});
 engine.on('blocksUnlinked', ({ fromId, toId }) => {});
 engine.on('linkUpdated', ({ fromId, toId, label }) => {});
+engine.on('linksChanged', ({ fromId, toId }) => {}); // undo/redo replayed a link change
 engine.on('blocksImported', ({ count }) => {});
 engine.on('engineCleared', () => {});
 engine.on('blocksArranged', ({ count }) => {});

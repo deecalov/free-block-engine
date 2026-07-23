@@ -4,6 +4,7 @@
  * Entries are plain objects: `{ label, undo(), redo() }`. The engine records
  * an entry for every mutating operation; batches group several entries into
  * one atomic undo step (used e.g. by arrangeBlocks and multi-block drag).
+ * Batches nest: entries are grouped until the outermost batch closes.
  *
  * @author Paul Deecalov
  * @license MIT
@@ -18,6 +19,19 @@ export class History {
     /** @type {Array<{label: string, undo: () => void, redo: () => void}>} */
     this.redoStack = [];
     this._batch = null;
+    this._batchDepth = 0;
+  }
+
+  /**
+   * Change the maximum number of undo entries, trimming the oldest ones
+   * if the stack already exceeds the new limit.
+   * @param {number} limit
+   */
+  setLimit(limit) {
+    this.limit = limit;
+    while (this.undoStack.length > this.limit) {
+      this.undoStack.shift();
+    }
   }
 
   /**
@@ -40,21 +54,28 @@ export class History {
 
   /**
    * Open a batch: subsequent records are grouped into one undo step.
-   * Nested calls are ignored (the outer batch wins).
+   * Nested calls increase the depth; the batch closes when the outermost
+   * endBatch() is reached.
    *
    * @param {string} label
    */
   beginBatch(label) {
-    if (!this._batch) {
-      this._batch = { label, entries: [] };
+    if (this._batch) {
+      this._batchDepth++;
+      return;
     }
+    this._batch = { label, entries: [] };
+    this._batchDepth = 1;
   }
 
-  /** Close the current batch and push it as a single entry. */
+  /** Close the current batch level; the outermost close pushes one entry. */
   endBatch() {
+    if (!this._batch) return;
+    this._batchDepth--;
+    if (this._batchDepth > 0) return;
     const batch = this._batch;
     this._batch = null;
-    if (!batch || batch.entries.length === 0) return;
+    if (batch.entries.length === 0) return;
     this.record({
       label: batch.label,
       undo: () => {
@@ -101,5 +122,6 @@ export class History {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
     this._batch = null;
+    this._batchDepth = 0;
   }
 }

@@ -3,6 +3,22 @@
 All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- `duplicateBlock()` recorded history before copying the custom `data`
+  payload, so redoing an undone duplicate silently dropped the data. The
+  copy is now recorded as one batch of create + `setBlockData`.
+- Nested `beginBatch()`/`endBatch()` pairs: the first `endBatch()` closed
+  the outer batch prematurely. Batches now track nesting depth and close
+  on the outermost `endBatch()`.
+- `updateSettings({ historyLimit })` and snapshot import now propagate the
+  new limit to the existing undo stack (`History.setLimit()`), trimming
+  the oldest entries when the limit shrinks.
+- Documented the `linksChanged({ fromId, toId })` event (emitted when
+  undo/redo replays a link change) in the README events list.
+
 ## [2.0.0] — 2026-07-23
 
 Complete overhaul: npm packaging, leak-free renderer rewrite, undo/redo and a
