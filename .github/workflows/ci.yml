@@ -30,3 +30,10 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Build ASP.NET Core example
+        run: dotnet build examples/aspnetcore --configuration Release

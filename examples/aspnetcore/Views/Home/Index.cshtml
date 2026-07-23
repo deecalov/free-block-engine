@@ -1,0 +1,27 @@
+@{
+    ViewData["Title"] = "Board";
+}
+
+<div class="toolbar">
+    <span class="toolbar-brand">Free Block Engine <em>on ASP.NET Core 10</em></span>
+    <button id="newBlockBtn" type="button">New Block</button>
+    <div class="separator"></div>
+    <button id="undoBtn" type="button" disabled title="Ctrl+Z">&#8630; Undo</button>
+    <button id="redoBtn" type="button" disabled title="Ctrl+Y">&#8631; Redo</button>
+    <div class="separator"></div>
+    <button id="zoomOutBtn" type="button">&#8722;</button>
+    <span id="zoomLabel">100%</span>
+    <button id="zoomInBtn" type="button">+</button>
+    <button id="zoomFitBtn" type="button">Fit</button>
+    <div class="separator"></div>
+    <button id="saveBtn" type="button" class="accent">Save to server</button>
+    <button id="loadBtn" type="button">Load from server</button>
+    <span id="status"></span>
+</div>
+
+<div id="board"></div>
+
+@section Scripts {
+    <script src="~/lib/free-block-engine.global.js" asp-append-version="true"></script>
+    <script src="~/js/board.js" asp-append-version="true"></script>
+}

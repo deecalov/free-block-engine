@@ -97,6 +97,11 @@ import { BlockEngine, BlockRenderer } from 'free-block-engine';
 
 Open [example.html](example.html) for a full-featured demo (toolbar, undo/redo, zoom, import/export, read-only mode).
 
+Integrating with a backend? See
+[examples/aspnetcore](examples/aspnetcore/README.md) — an ASP.NET Core 10 MVC
+app with server-side board persistence (anti-forgery protected REST endpoint,
+atomic file storage).
+
 ## 📚 API Reference
 
 Full reference with all signatures: [docs/api.md](docs/api.md).

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>FreeBlockEngine.Example</RootNamespace>
+  </PropertyGroup>
+
+  <!--
+    The example serves the library bundle from wwwroot/lib.
+    The bundle is produced by `npm run build` in the repository root and
+    copied here before every build, so wwwroot/lib is not tracked in git.
+  -->
+  <Target Name="CopyFreeBlockEngineBundle" BeforeTargets="Build">
+    <Error Condition="!Exists('$(MSBuildProjectDirectory)/../../dist/free-block-engine.global.js')"
+           Text="dist/free-block-engine.global.js not found. Run 'npm run build' in the repository root first." />
+    <Copy SourceFiles="$(MSBuildProjectDirectory)/../../dist/free-block-engine.global.js"
+          DestinationFolder="$(MSBuildProjectDirectory)/wwwroot/lib"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
