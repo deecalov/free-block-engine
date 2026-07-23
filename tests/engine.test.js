@@ -305,6 +305,61 @@ describe('BlockEngine — undo/redo', () => {
     expect(undone).toBe(3);
   });
 
+  it('applies a lowered historyLimit to already recorded entries', () => {
+    for (let i = 0; i < 5; i++) {
+      engine.createBlock(`b${i}`);
+    }
+    engine.updateSettings({ historyLimit: 2 });
+    let undone = 0;
+    while (engine.undo()) undone++;
+    expect(undone).toBe(2);
+  });
+
+  it('preserves custom data through undo/redo of duplicateBlock', () => {
+    const original = engine.createBlock('text');
+    engine.setBlockData(original.id, { tags: ['x'] });
+    const copy = engine.duplicateBlock(original.id);
+
+    engine.undo(); // one step removes the whole duplicate
+    expect(engine.getBlock(copy.id)).toBeNull();
+    engine.redo();
+    expect(engine.getBlock(copy.id).data).toEqual({ tags: ['x'] });
+  });
+
+  it('groups nested batches into one undo step', () => {
+    const a = engine.createBlock('a'); // auto-positioned at 50,50
+    engine.beginBatch('outer');
+    engine.setBlockContent(a.id, 'one');
+    engine.beginBatch('inner');
+    engine.setBlockPosition(a.id, 200, 200);
+    engine.endBatch();
+    engine.setBlockContent(a.id, 'two');
+    engine.endBatch();
+
+    engine.undo();
+    expect(engine.getBlock(a.id).content).toBe('a');
+    expect(engine.getBlock(a.id).position).toEqual({ x: 50, y: 50 });
+    engine.redo();
+    expect(engine.getBlock(a.id).content).toBe('two');
+    expect(engine.getBlock(a.id).position).toEqual({ x: 200, y: 200 });
+  });
+
+  it('emits linksChanged when undo/redo replays a link change', () => {
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    engine.linkBlocks(a.id, b.id, 'single');
+    const fn = vi.fn();
+    engine.on('linksChanged', fn);
+
+    engine.undo();
+    expect(fn).toHaveBeenCalledWith({ fromId: a.id, toId: b.id });
+    expect(engine.getLinkInfo(a.id, b.id)).toBeNull();
+
+    engine.redo();
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(engine.getLinkInfo(a.id, b.id)).toMatchObject({ type: 'single' });
+  });
+
   it('link changes are undoable', () => {
     const a = engine.createBlock('a');
     const b = engine.createBlock('b');
