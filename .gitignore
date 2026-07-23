@@ -7,6 +7,12 @@ dist/
 # Test artifacts
 coverage/
 
+# .NET example
+examples/aspnetcore/bin/
+examples/aspnetcore/obj/
+examples/aspnetcore/wwwroot/lib/
+examples/aspnetcore/App_Data/
+
 # Logs
 *.log
 npm-debug.log*
