@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { BlockEngine, BlockRenderer } from '../src/index.js';
 
 /** Dispatch a bubbling pointer event on a target. */
@@ -295,5 +295,192 @@ describe('BlockRenderer', () => {
     renderer.setViewMode('free');
     expect(container.classList.contains('grid-mode')).toBe(false);
     expect(container.querySelector('.resize-handle')).toBeTruthy();
+  });
+});
+
+describe('BlockRenderer — keyboard shortcuts', () => {
+  /** @type {BlockEngine} */
+  let engine;
+  /** @type {BlockRenderer} */
+  let renderer;
+  /** @type {HTMLElement} */
+  let container;
+
+  /** Dispatch a keydown on window (the target browsers use is body/window). */
+  function key(opts) {
+    window.dispatchEvent(
+      new window.KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...opts })
+    );
+  }
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    engine = new BlockEngine();
+    renderer = new BlockRenderer(engine, container, {
+      keyboardShortcuts: true,
+      confirmDelete: false,
+    });
+  });
+
+  afterEach(() => {
+    renderer.destroy();
+    container.remove();
+    document.body.innerHTML = '';
+  });
+
+  it('undoes and redoes with Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z', () => {
+    const a = engine.createBlock('a');
+    key({ key: 'z', ctrlKey: true });
+    expect(engine.getBlock(a.id)).toBeNull();
+    key({ key: 'y', ctrlKey: true });
+    expect(engine.getBlock(a.id)).toBeTruthy();
+    key({ key: 'z', ctrlKey: true });
+    expect(engine.getBlock(a.id)).toBeNull();
+    key({ key: 'Z', ctrlKey: true, shiftKey: true }); // browsers report uppercase with Shift
+    expect(engine.getBlock(a.id)).toBeTruthy();
+  });
+
+  it('selects all with Ctrl+A', () => {
+    engine.createBlock('a');
+    engine.createBlock('b');
+    key({ key: 'a', ctrlKey: true });
+    expect(renderer.selectedBlocks.size).toBe(2);
+  });
+
+  it('duplicates the selection with Ctrl+D', () => {
+    const a = engine.createBlock('a');
+    renderer.selectBlock(a.id);
+    key({ key: 'd', ctrlKey: true });
+    expect(engine.getAllBlocks()).toHaveLength(2);
+  });
+
+  it('deletes the selection with Delete, honouring confirmDelete', () => {
+    const a = engine.createBlock('a');
+    renderer.selectBlock(a.id);
+    key({ key: 'Delete' });
+    expect(engine.getBlock(a.id)).toBeNull();
+
+    renderer.options.confirmDelete = true;
+    const b = engine.createBlock('b');
+    renderer.selectBlock(b.id);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    key({ key: 'Delete' });
+    expect(engine.getBlock(b.id)).toBeTruthy(); // declined confirmation
+    confirmSpy.mockRestore();
+  });
+
+  it('nudges the selection with arrow keys (Shift = 1px without snapping)', () => {
+    const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    renderer.selectBlock(a.id);
+    key({ key: 'ArrowRight' });
+    expect(a.position).toEqual({ x: 120, y: 100 }); // gridSize step
+    key({ key: 'ArrowDown', shiftKey: true });
+    expect(a.position).toEqual({ x: 120, y: 101 });
+  });
+
+  it('nudges multiple selected blocks as one undo step', () => {
+    const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    const b = engine.createBlock('b', 'default', { x: 400, y: 100 });
+    renderer.selectAll();
+    key({ key: 'ArrowDown' });
+    expect(a.position.y).toBe(120);
+    expect(b.position.y).toBe(120);
+    engine.undo();
+    expect(engine.getBlock(a.id).position.y).toBe(100);
+    expect(engine.getBlock(b.id).position.y).toBe(100);
+  });
+
+  it('ignores shortcuts while typing in an editable element', () => {
+    const a = engine.createBlock('a');
+    const input = document.createElement('input');
+    document.body.appendChild(input);
+    input.dispatchEvent(
+      new window.KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true })
+    );
+    expect(engine.getBlock(a.id)).toBeTruthy();
+    input.remove();
+  });
+
+  it('blocks mutating shortcuts in read-only mode but keeps Ctrl+A', () => {
+    const a = engine.createBlock('a');
+    renderer.setReadOnly(true);
+    key({ key: 'z', ctrlKey: true });
+    expect(engine.getBlock(a.id)).toBeTruthy(); // undo suppressed
+    key({ key: 'a', ctrlKey: true });
+    expect(renderer.selectedBlocks.size).toBe(1);
+  });
+
+  it('does nothing when the option is disabled', () => {
+    const otherContainer = document.createElement('div');
+    document.body.appendChild(otherContainer);
+    const otherEngine = new BlockEngine();
+    const otherRenderer = new BlockRenderer(otherEngine, otherContainer);
+    const a = otherEngine.createBlock('a');
+    key({ key: 'z', ctrlKey: true });
+    expect(otherEngine.getBlock(a.id)).toBeTruthy();
+    otherRenderer.destroy();
+    otherContainer.remove();
+  });
+});
+
+describe('BlockRenderer — custom content hook', () => {
+  /** @type {BlockEngine} */
+  let engine;
+  /** @type {HTMLElement} */
+  let container;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    engine = new BlockEngine();
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('lets the host render content and disables inline editing', () => {
+    const hook = vi.fn((block, element) => {
+      element.textContent = '';
+      const strong = element.ownerDocument.createElement('strong');
+      strong.dataset.custom = 'yes';
+      strong.textContent = block.content.toUpperCase();
+      element.appendChild(strong);
+      return true;
+    });
+    const renderer = new BlockRenderer(engine, container, { renderContent: hook });
+    const a = engine.createBlock('hello', 'note');
+    const contentEl = renderer.getBlockElement(a.id).querySelector('.block-content');
+    expect(contentEl.querySelector('[data-custom]').textContent).toBe('HELLO');
+    expect(contentEl.contentEditable).not.toBe('true');
+    expect(hook).toHaveBeenCalledWith(a, contentEl, { readOnly: false });
+
+    engine.setBlockContent(a.id, 'updated');
+    expect(hook).toHaveBeenCalledTimes(2);
+    expect(contentEl.querySelector('[data-custom]').textContent).toBe('UPDATED');
+    renderer.destroy();
+  });
+
+  it('falls back to plain text when the hook declines or throws', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let mode = 'decline';
+    const renderer = new BlockRenderer(engine, container, {
+      renderContent: () => {
+        if (mode === 'throw') throw new Error('boom');
+        return false;
+      },
+    });
+    const a = engine.createBlock('plain text');
+    const contentEl = renderer.getBlockElement(a.id).querySelector('.block-content');
+    expect(contentEl.textContent).toBe('plain text');
+    expect(contentEl.contentEditable).toBe('true');
+
+    mode = 'throw';
+    engine.setBlockContent(a.id, 'still plain');
+    expect(contentEl.textContent).toBe('still plain');
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
+    renderer.destroy();
   });
 });

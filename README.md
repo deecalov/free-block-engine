@@ -36,17 +36,20 @@
 - **Lasso selection** — drag on empty canvas to select multiple blocks, drag any selected block to move them all
 - **Navigable minimap** — bird's-eye view; click or drag on it to jump around the canvas
 - **Read-only mode** — display graphs without allowing edits
+- **Optional keyboard shortcuts** — undo/redo, select all, duplicate, delete and arrow-key nudging (`keyboardShortcuts: true`)
+- **Custom content rendering** — plug in your own block renderer (markdown, HTML, …) via the `renderContent` hook
 
 ### Data
 
 - **Import / Export** — versioned JSON with validation, dangling-link pruning and legacy-format support
+- **Autosave** — debounced localStorage persistence with `createAutosave()`
 - **Custom data** — a serializable `data` payload on every block survives export/import
 - **Search** — real-time content search across all blocks
 
 ### Engineering
 
 - **Zero dependencies** — pure JavaScript, no runtime packages
-- **ESM / CJS / browser global** builds + TypeScript declarations generated from JSDoc
+- **ESM / CJS / browser global** builds + TypeScript declarations generated from JSDoc, with fully typed engine events
 - **Leak-free renderer** — one delegated Pointer Events pipeline, `destroy()` releases everything; multiple instances can coexist on a page
 - **Incremental rendering** — engine events update only the affected DOM nodes
 - **Tested** — Vitest + jsdom suite for engine and renderer, CI via GitHub Actions
@@ -120,6 +123,7 @@ engine.setBlockData(block.id, { priority: 'high' }); // serializable custom data
 engine.duplicateBlock(block.id);
 engine.deleteBlock(block.id);
 engine.clear();
+engine.arrangeBlocks(3); // grid layout in N columns, one undo step
 
 // Queries
 engine.getBlock(id);
@@ -163,6 +167,8 @@ const renderer = new BlockRenderer(engine, 'container-id', {
   confirmDelete: true,
   minZoom: 0.2,
   maxZoom: 3,
+  keyboardShortcuts: false, // Ctrl+Z/Y, Ctrl+A, Ctrl+D, Delete, arrow nudge
+  renderContent: null, // custom content renderer, see Customization
 });
 
 // Camera
@@ -239,6 +245,12 @@ or the other listeners.
 | Pan                       | Space+drag, middle mouse, wheel, touch-drag on empty canvas |
 | Cancel linking / gestures | Escape                                                      |
 
+With `keyboardShortcuts: true` the renderer also handles: Ctrl/Cmd+Z — undo,
+Ctrl+Y / Ctrl+Shift+Z — redo, Ctrl+A — select all, Ctrl+D — duplicate,
+Delete/Backspace — delete the selection, arrow keys — nudge the selection by
+one grid step (Shift: by 1 px, without snapping). Shortcuts are ignored while
+typing, and mutating ones are disabled in read-only mode.
+
 ## 🎨 Customization
 
 ### Theming with CSS variables
@@ -266,6 +278,41 @@ engine.setBlockData(block.id, {
   tags: ['review'],
 });
 // block.data is serialized by exportToJSON() and restored on import.
+```
+
+### Custom content rendering
+
+Render block content yourself — markdown, HTML, widgets — with the
+`renderContent` renderer option. Return `true` to take ownership of the
+element (the built-in text editing is then disabled for that block); any
+falsy return falls back to plain text. The hook runs again on every content
+update, reusing the same element. Sanitize any HTML you inject.
+
+```javascript
+const renderer = new BlockRenderer(engine, 'canvas', {
+  renderContent(block, element) {
+    if (block.type !== 'markdown') return false; // default text rendering
+    element.innerHTML = myMarkdownToSafeHtml(block.content);
+    return true;
+  },
+});
+```
+
+### Autosave
+
+Persist the board into localStorage (or any `getItem`/`setItem`/`removeItem`
+backend) with debounced writes on every change, including undo/redo:
+
+```javascript
+import { createAutosave } from 'free-block-engine';
+
+const autosave = createAutosave(engine, {
+  key: 'my-board', // storage key ('free-block-engine')
+  debounceMs: 500, // delay after the last change
+});
+
+autosave.load(); // restore the saved board, if any
+// … autosave.flush(), autosave.clear(), autosave.destroy()
 ```
 
 ### Engine settings

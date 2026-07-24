@@ -21,11 +21,11 @@ by priority within each section.
 
 ## API & developer experience
 
-- [ ] Type the event system: a JSDoc event-name → payload map so the generated `.d.ts` gives typed `on`/`off`/`emit` instead of `(data: unknown) => void`.
-- [ ] Offer built-in optional keyboard shortcuts in the renderer (Ctrl+Z/Y, Delete, Ctrl+A, Ctrl+D, arrow-key nudge). Today they live only in the demo (`example.js`), so every integrator has to rebuild them.
-- [ ] Document `arrangeBlocks()` in the README API section and `docs/api.md`.
-- [ ] Custom block content hook (render markdown/HTML per block type) — the main extensibility request a host app will hit; today content is plain text only.
-- [ ] Autosave helper: a small localStorage adapter with debounce, as a documented recipe or an exported utility.
+- [x] Type the event system: a JSDoc event-name → payload map so the generated `.d.ts` gives typed `on`/`off`/`emit` instead of `(data: unknown) => void`. Done: `EngineEventMap` typedef, generic `on`/`off`/`emit`.
+- [x] Offer built-in optional keyboard shortcuts in the renderer (Ctrl+Z/Y, Delete, Ctrl+A, Ctrl+D, arrow-key nudge). Done: `keyboardShortcuts` renderer option; the demo uses it.
+- [x] Document `arrangeBlocks()` in the README API section and `docs/api.md`. Done.
+- [x] Custom block content hook (render markdown/HTML per block type). Done: `renderContent(block, element, { readOnly })` renderer option.
+- [x] Autosave helper: a small localStorage adapter with debounce. Done: `Autosave` / `createAutosave()` export with injectable storage.
 
 ## Features
 

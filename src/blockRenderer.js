@@ -29,6 +29,13 @@ export class BlockRenderer {
    * @param {boolean} [options.confirmDelete] Ask for confirmation before deleting (true).
    * @param {number} [options.minZoom] Lower zoom bound (0.2).
    * @param {number} [options.maxZoom] Upper zoom bound (3).
+   * @param {boolean} [options.keyboardShortcuts] Enable built-in hotkeys: Ctrl/Cmd+Z/Y
+   *   undo/redo, Ctrl+A select all, Ctrl+D duplicate, Delete/Backspace delete the
+   *   selection, arrows nudge the selection (false).
+   * @param {(block: import('./block.js').Block, element: HTMLElement, context: {readOnly: boolean}) => boolean|void} [options.renderContent]
+   *   Custom content renderer (e.g. markdown). Render into `element` and return
+   *   true to take ownership — the built-in text editing is disabled for that
+   *   block. Any falsy return falls back to plain-text rendering.
    */
   constructor(engine, containerOrId, options = {}) {
     this.engine = engine;
@@ -45,6 +52,8 @@ export class BlockRenderer {
       confirmDelete: true,
       minZoom: 0.2,
       maxZoom: 3,
+      keyboardShortcuts: false,
+      renderContent: null,
       ...options,
     };
 
@@ -160,8 +169,10 @@ export class BlockRenderer {
     const el = this.blockElements.get(block.id);
     if (!el) return;
     const contentEl = el.querySelector('.block-content');
-    if (contentEl && el.ownerDocument.activeElement !== contentEl) {
-      contentEl.textContent = block.content;
+    if (contentEl && !this._renderCustomContent(block, contentEl)) {
+      if (el.ownerDocument.activeElement !== contentEl) {
+        contentEl.textContent = block.content;
+      }
     }
     const typeEl = el.querySelector('.block-type');
     if (typeEl) typeEl.textContent = block.type;
@@ -253,19 +264,21 @@ export class BlockRenderer {
 
     const content = doc.createElement('div');
     content.className = 'block-content';
-    content.textContent = block.content;
     content.dataset.placeholder = 'Click to edit\u2026';
-    if (!this.options.readOnly) {
-      content.contentEditable = 'true';
-      content.addEventListener('blur', () => {
-        this.engine.setBlockContent(block.id, content.textContent);
-      });
-      content.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.ctrlKey) {
-          e.preventDefault();
-          content.blur();
-        }
-      });
+    if (!this._renderCustomContent(block, content)) {
+      content.textContent = block.content;
+      if (!this.options.readOnly) {
+        content.contentEditable = 'true';
+        content.addEventListener('blur', () => {
+          this.engine.setBlockContent(block.id, content.textContent);
+        });
+        content.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault();
+            content.blur();
+          }
+        });
+      }
     }
     content.addEventListener('pointerdown', (e) => e.stopPropagation());
     div.appendChild(content);
@@ -293,6 +306,28 @@ export class BlockRenderer {
     }
 
     return div;
+  }
+
+  /**
+   * Run the custom content hook (options.renderContent). The host renders
+   * into the given element (reusing or clearing it as needed) and returns
+   * true to take ownership; a falsy return or a thrown error falls back to
+   * the built-in plain-text rendering. Hosts injecting HTML are responsible
+   * for sanitizing it.
+   *
+   * @param {import('./block.js').Block} block
+   * @param {HTMLElement} element The `.block-content` element.
+   * @returns {boolean} true when the host rendered the content.
+   */
+  _renderCustomContent(block, element) {
+    const hook = this.options.renderContent;
+    if (typeof hook !== 'function') return false;
+    try {
+      return hook(block, element, { readOnly: this.options.readOnly }) === true;
+    } catch (error) {
+      console.error('[BlockRenderer] renderContent hook failed:', error);
+      return false;
+    }
   }
 
   /** Build the "Connections:" chip list, or null when the block has none. */

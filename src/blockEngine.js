@@ -15,13 +15,45 @@ import { History } from './history.js';
 /** Link types accepted by linkBlocks(). */
 export const LINK_TYPES = Object.freeze(['single', 'reverse', 'double']);
 
+/**
+ * @typedef {object} EngineSettings
+ * @property {number} gridSize Snap step for block positions.
+ * @property {number} defaultSpacing Auto-position / arrange spacing.
+ * @property {number} minBlockWidth Lower bound for setBlockSize().
+ * @property {number} minBlockHeight Lower bound for setBlockSize().
+ * @property {number} historyLimit Maximum number of undo entries.
+ */
+
+/**
+ * Engine events and their payloads. Keeps `on`/`off`/`emit` fully typed
+ * in the generated TypeScript declarations.
+ *
+ * @typedef {object} EngineEventMap
+ * @property {Block} blockCreated
+ * @property {Block} blockUpdated
+ * @property {Block} blockMoved
+ * @property {Block} blockResized
+ * @property {Block} blockRestored
+ * @property {{id: string, affected: string[]}} blockDeleted
+ * @property {{from: Block, to: Block, linkType: string, label: string}} blocksLinked
+ * @property {{fromId: string, toId: string}} blocksUnlinked
+ * @property {{fromId: string, toId: string, label: string}} linkUpdated
+ * @property {{fromId: string, toId: string}} linksChanged
+ * @property {{count: number}} blocksImported
+ * @property {undefined} engineCleared
+ * @property {{count: number}} blocksArranged
+ * @property {{canUndo: boolean, canRedo: boolean}} historyChanged
+ * @property {EngineSettings} settingsUpdated
+ */
+
 export class BlockEngine {
-  /** @param {object} [settings] Partial settings override. */
+  /** @param {Partial<EngineSettings>} [settings] Partial settings override. */
   constructor(settings = {}) {
     /** @type {Map<string, Block>} */
     this.blocks = new Map();
-    /** @type {Map<string, Array<(data: unknown) => void>>} */
+    /** @type {Map<string, Array<(data: never) => void>>} */
     this.eventListeners = new Map();
+    /** @type {EngineSettings} */
     this.settings = {
       gridSize: 20,
       defaultSpacing: 300,
@@ -38,8 +70,9 @@ export class BlockEngine {
 
   /**
    * Subscribe to an engine event.
-   * @param {string} event
-   * @param {(data: unknown) => void} callback
+   * @template {keyof EngineEventMap} E
+   * @param {E} event
+   * @param {(data: EngineEventMap[E]) => void} callback
    */
   on(event, callback) {
     if (!this.eventListeners.has(event)) {
@@ -50,8 +83,9 @@ export class BlockEngine {
 
   /**
    * Unsubscribe a previously registered callback.
-   * @param {string} event
-   * @param {(data: unknown) => void} callback
+   * @template {keyof EngineEventMap} E
+   * @param {E} event
+   * @param {(data: EngineEventMap[E]) => void} callback
    */
   off(event, callback) {
     const listeners = this.eventListeners.get(event);
@@ -67,8 +101,9 @@ export class BlockEngine {
    * remaining listeners still run, so one broken subscriber cannot break
    * an engine operation.
    *
-   * @param {string} event
-   * @param {unknown} [data]
+   * @template {keyof EngineEventMap} E
+   * @param {E} event
+   * @param {EngineEventMap[E]} [data]
    */
   emit(event, data) {
     const listeners = this.eventListeners.get(event);
@@ -742,8 +777,8 @@ export class BlockEngine {
 
   /**
    * Update known settings keys; unknown keys are ignored.
-   * @param {object} [partial]
-   * @returns {object} The resulting settings.
+   * @param {Partial<EngineSettings>} [partial]
+   * @returns {EngineSettings} The resulting settings.
    */
   updateSettings(partial = {}) {
     for (const key of Object.keys(partial)) {
