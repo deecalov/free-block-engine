@@ -31,6 +31,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Tooling: coverage thresholds (`npm run test:coverage`), a bundle-size budget
   (`npm run size`), a Node 20/22/24 CI matrix, xUnit integration tests for the
   ASP.NET Core example, Dependabot and CodeQL.
+- The ASP.NET Core example now uses the optional renderer features instead of
+  reimplementing them: built-in shortcuts (only `Ctrl+S` stays in the page),
+  alignment guides, a context menu with an app-specific "Save to server"
+  entry, a light/dark/auto theme switch persisted in `localStorage`, and
+  SVG/PNG export buttons. It also autosaves to the server through
+  `createAutosave()` with a custom storage adapter, flushing on `pagehide`
+  via `keepalive` so the last edits survive closing the tab.
 
 ### Changed
 

@@ -58,6 +58,16 @@ body {
   cursor: default;
 }
 
+.toolbar select {
+  background: #3a4356;
+  color: white;
+  border: none;
+  padding: 8px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
 .toolbar .separator {
   width: 1px;
   height: 28px;
@@ -84,9 +94,39 @@ body {
   height: calc(100vh - 56px);
 }
 
-/* Theme the canvas via the library's CSS variables */
+/* Theme the canvas via the library's CSS variables. These sit on top of
+   whichever preset (light/dark) the renderer applies. */
 #board.blocks-container {
   --fbe-accent: #7c3aed;
   --fbe-edge-single: #7c3aed;
   --fbe-edge-double: #0ea5e9;
+}
+
+/* The library only themes its own canvas — the page chrome is the host's
+   job. board.js mirrors the resolved scheme onto <body>. */
+body.dark {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+body.dark .toolbar {
+  background: #131722;
+}
+
+body.dark .toolbar button,
+body.dark .toolbar select {
+  background: #273044;
+}
+
+body.dark .toolbar button:hover:not(:disabled) {
+  background: #35405a;
+}
+
+body.dark .toolbar button.accent {
+  background: #7c3aed;
+}
+
+body.dark .toolbar button:disabled {
+  background: #1c2230;
+  color: #4b5563;
 }

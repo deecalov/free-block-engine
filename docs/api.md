@@ -246,6 +246,17 @@ the media query and reports flips through `onThemeChange`. `getTheme()`
 resolves `'auto'` to the scheme actually in effect. The subscription is
 dropped by `setTheme()` and `destroy()`.
 
+The presets cover the renderer's own DOM only — your toolbars, sidebars and
+page background are yours to theme. The usual arrangement is to mirror the
+resolved scheme onto an ancestor element:
+
+```javascript
+renderer.onThemeChange = (theme) => document.body.classList.toggle('dark', theme === 'dark');
+document.body.classList.toggle('dark', renderer.getTheme() === 'dark');
+```
+
+Both bundled examples do exactly this; see `examples/aspnetcore/site.css`.
+
 ### Alignment guides
 
 With `snapGuides` the dragged block aligns to the edges and centers of its
@@ -322,3 +333,10 @@ Without a storage backend (e.g. during SSR) the helper stays inert.
 
 Storage errors (quota, privacy mode) are caught and logged — they never
 break the engine operation that triggered the save.
+
+The backend does not have to be Web Storage: anything with
+`getItem`/`setItem`/`removeItem` qualifies, including an adapter that POSTs
+to a server (`setItem` is synchronous by contract, so fire the request
+without awaiting it and report the outcome elsewhere). The ASP.NET Core
+example ships exactly that, including a `pagehide` flush with
+`fetch(..., { keepalive: true })`.
