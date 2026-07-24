@@ -7,6 +7,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Dark theme** and a `theme` renderer option (`'light' | 'dark' | 'auto'`).
+  `'auto'` follows `prefers-color-scheme` and reports flips through
+  `onThemeChange`. Every colour that was previously hard-coded now comes from
+  a `--fbe-*` custom property, so custom palettes are a variable override
+  away.
+- **Alignment guides** while dragging (`snapGuides`): blocks snap to the
+  edges and centers of their neighbours within `snapThreshold` screen pixels
+  and the position is committed without grid rounding, so the alignment
+  survives. The geometry is exported as `findAlignment()`.
+- **Context menu** (`contextMenu`) for blocks and the canvas, opened by
+  right-click or a touch long-press, with `role="menu"`, arrow/Home/End
+  navigation and Escape. Items are replaceable through `contextMenuItems`.
+- **Stacking order**: `block.zIndex`, `engine.bringToFront()` (not recorded
+  in history — the renderer calls it on select and drag) and the undoable
+  `engine.setBlockZIndex()`. The order is part of the exported JSON.
+- **Image export**: `exportToSVG()` builds standalone SVG from the model and
+  `exportToPNG()` rasterizes it through a canvas. Both are available as
+  renderer methods and as standalone functions.
+- **Offscreen culling** (`cullOffscreen`, `cullMargin`) for large boards, plus
+  `benchmarks/stress.html` to measure it. At 3000 blocks dragging goes from
+  8 to 21 fps; see `docs/architecture.md` for the full figures.
+- Tooling: coverage thresholds (`npm run test:coverage`), a bundle-size budget
+  (`npm run size`), a Node 20/22/24 CI matrix, xUnit integration tests for the
+  ASP.NET Core example, Dependabot and CodeQL.
+
+### Changed
+
+- `getIncomingLinks()` is served from a reverse link index instead of scanning
+  every block, removing the quadratic cost from rendering and dragging.
+  Results are now ordered by link creation rather than block order.
+- The minimap reuses its DOM nodes instead of recreating one per block on
+  every camera frame.
+
+### Fixed
+
+- A full `render()` with culling enabled laid the board out twice; visibility
+  is now decided before insertion (3.8× faster first render on 1000 blocks).
+
+### Added (earlier in this cycle)
+
 - Typed engine events: the generated TypeScript declarations expose
   `EngineEventMap`, and `on`/`off`/`emit` are generic over its keys, so the
   payload type is inferred from the event name.

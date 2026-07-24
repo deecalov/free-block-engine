@@ -7,6 +7,8 @@ const engine = new BlockEngine();
 const renderer = new BlockRenderer(engine, 'blocks-container', {
   defaultLinkType: document.getElementById('linkTypeSelect').value,
   keyboardShortcuts: true, // Ctrl+Z/Y, Ctrl+A, Ctrl+D, Delete, arrow nudge
+  snapGuides: true,
+  contextMenu: true,
 });
 
 // ------------------------------------------------------------------ status
@@ -117,7 +119,46 @@ function toggleReadOnly() {
   updateStatus(readOnly ? 'Read-only mode enabled' : 'Editing enabled');
 }
 
+// ------------------------------------------------------------------ theme
+
+function themeChanged() {
+  const theme = document.getElementById('themeSelect').value;
+  renderer.setTheme(theme);
+  document.body.classList.toggle('dark', renderer.getTheme() === 'dark');
+  updateStatus(`Theme: ${theme}`);
+}
+
+renderer.onThemeChange = (theme) => {
+  document.body.classList.toggle('dark', theme === 'dark');
+};
+
 // ----------------------------------------------------------- import/export
+
+/** Trigger a browser download for a blob. */
+function download(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportSvg() {
+  const stamp = new Date().toISOString().slice(0, 10);
+  download(new Blob([renderer.exportToSVG()], { type: 'image/svg+xml' }), `board_${stamp}.svg`);
+  updateStatus('Exported as SVG');
+}
+
+async function exportPng() {
+  try {
+    const blob = await renderer.exportToPNG({ scale: 2 });
+    download(blob, `board_${new Date().toISOString().slice(0, 10)}.png`);
+    updateStatus('Exported as PNG');
+  } catch (error) {
+    updateStatus(`PNG export failed: ${error.message}`);
+  }
+}
 
 function exportData() {
   const data = engine.exportToJSON();
@@ -179,6 +220,9 @@ Object.assign(window, {
   zoomOut,
   zoomFit,
   toggleReadOnly,
+  themeChanged,
+  exportSvg,
+  exportPng,
   exportData,
   importData,
   handleImport,

@@ -14,7 +14,10 @@
  * @license MIT
  */
 
+import { findAlignment } from './snapGuides.js';
+
 const DRAG_THRESHOLD = 4; // screen px before a press becomes a drag
+const LONG_PRESS_MS = 500; // touch hold before the context menu opens
 
 export class InteractionController {
   /** @param {import('./blockRenderer.js').BlockRenderer} renderer */
@@ -24,6 +27,7 @@ export class InteractionController {
     this.linking = null;
     this.spaceDown = false;
     this._touchPoints = new Map();
+    this._longPress = null;
   }
 
   /** @param {AbortSignal} signal */
@@ -34,6 +38,7 @@ export class InteractionController {
     container.addEventListener('pointerup', (e) => this.onPointerUp(e), { signal });
     container.addEventListener('pointercancel', () => this.cancelGesture(), { signal });
     container.addEventListener('wheel', (e) => this.onWheel(e), { passive: false, signal });
+    container.addEventListener('contextmenu', (e) => this.onContextMenu(e), { signal });
 
     const win = container.ownerDocument.defaultView;
     win.addEventListener('keydown', (e) => this.onKeyDown(e), { signal });
@@ -42,8 +47,48 @@ export class InteractionController {
 
   // ------------------------------------------------------------- pointers
 
+  /**
+   * Right-click (and the keyboard menu key) opens the context menu.
+   * @param {MouseEvent} e
+   */
+  onContextMenu(e) {
+    const r = this.renderer;
+    if (!r.options.contextMenu) return;
+    e.preventDefault();
+    this.cancelGesture();
+    r.openContextMenu({ clientX: e.clientX, clientY: e.clientY, target: e.target });
+  }
+
+  /** Start the touch hold that stands in for a right-click. */
+  _startLongPress(e) {
+    const r = this.renderer;
+    if (!r.options.contextMenu) return;
+    this._cancelLongPress();
+    const { clientX, clientY, target } = e;
+    this._longPress = {
+      x: clientX,
+      y: clientY,
+      timer: setTimeout(() => {
+        this._longPress = null;
+        this.cancelGesture();
+        r.openContextMenu({ clientX, clientY, target });
+      }, LONG_PRESS_MS),
+    };
+  }
+
+  _cancelLongPress() {
+    if (this._longPress) {
+      clearTimeout(this._longPress.timer);
+      this._longPress = null;
+    }
+  }
+
   onPointerDown(e) {
     const r = this.renderer;
+
+    if (r.contextMenu.isOpen) {
+      r.contextMenu.close();
+    }
 
     if (this.linking) {
       const targetBlock = e.target.closest ? e.target.closest('.block') : null;
@@ -54,6 +99,10 @@ export class InteractionController {
 
     if (e.pointerType === 'touch') {
       this._touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      // Only the first finger can hold for a menu; a second one means pinch.
+      if (this._touchPoints.size === 1) {
+        this._startLongPress(e);
+      }
       if (this._touchPoints.size === 2 && r.viewMode === 'free') {
         this._startPinch();
         return;
@@ -129,6 +178,12 @@ export class InteractionController {
       );
     }
 
+    // A moving finger is a drag or a pan, not a long press.
+    if (this._longPress) {
+      const moved = Math.hypot(e.clientX - this._longPress.x, e.clientY - this._longPress.y);
+      if (moved > DRAG_THRESHOLD) this._cancelLongPress();
+    }
+
     if (e.pointerType === 'touch' && this._touchPoints.has(e.pointerId)) {
       this._touchPoints.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.gesture && this.gesture.type === 'pinch') {
@@ -161,6 +216,7 @@ export class InteractionController {
   }
 
   onPointerUp(e) {
+    this._cancelLongPress();
     if (e.pointerType === 'touch') {
       this._touchPoints.delete(e.pointerId);
       if (this.gesture && this.gesture.type === 'pinch') {
@@ -324,6 +380,10 @@ export class InteractionController {
     const hadGesture = this.gesture !== null;
     this.cancelGesture();
     const r = this.renderer;
+    if (r.contextMenu.isOpen) {
+      r.contextMenu.close();
+      return;
+    }
     if (r.linkEditor.isOpen) {
       r.linkEditor.close();
     } else if (!hadLinking && !hadGesture) {
@@ -343,6 +403,8 @@ export class InteractionController {
       g.moved = true;
       if (!r.selectedBlocks.has(g.blockId)) {
         r.selectBlock(g.blockId, false);
+      } else {
+        r.engine.bringToFront(g.blockId);
       }
       g.origins = new Map();
       for (const id of r.selectedBlocks) {
@@ -356,9 +418,10 @@ export class InteractionController {
     }
 
     const zoom = r.camera.zoom;
+    const snap = this._alignDrag(g, dx / zoom, dy / zoom);
     for (const [id, origin] of g.origins) {
-      const nx = origin.x + dx / zoom;
-      const ny = origin.y + dy / zoom;
+      const nx = origin.x + dx / zoom + snap.dx;
+      const ny = origin.y + dy / zoom + snap.dy;
       r.setGestureOverride(id, { x: nx, y: ny });
       const el = r.getBlockElement(id);
       if (el) {
@@ -370,12 +433,51 @@ export class InteractionController {
     r.minimap.update();
   }
 
+  /**
+   * Alignment correction for the current drag, or a zero offset when the
+   * feature is off. Guides are drawn as a side effect.
+   *
+   * @param {object} g The drag gesture state.
+   * @param {number} worldDx Pointer delta in world units.
+   * @param {number} worldDy Pointer delta in world units.
+   * @returns {{dx: number, dy: number}}
+   */
+  _alignDrag(g, worldDx, worldDy) {
+    const r = this.renderer;
+    g.snapped = false;
+    if (!r.options.snapGuides) return { dx: 0, dy: 0 };
+
+    const lead = r.engine.getBlock(g.blockId);
+    const origin = g.origins.get(g.blockId);
+    if (!lead || !origin) return { dx: 0, dy: 0 };
+
+    const moving = {
+      x: origin.x + worldDx,
+      y: origin.y + worldDy,
+      width: lead.size.width,
+      height: lead.size.height,
+    };
+    const others = [];
+    for (const block of r.engine.getAllBlocks()) {
+      if (!g.origins.has(block.id)) others.push(r.getBlockRect(block));
+    }
+
+    const alignment = findAlignment(moving, others, r.options.snapThreshold / r.camera.zoom);
+    r.guides.show(alignment);
+    g.snapped = alignment.dx !== 0 || alignment.dy !== 0;
+    return { dx: alignment.dx, dy: alignment.dy };
+  }
+
   _endDrag(g, e) {
     const r = this.renderer;
+    r.guides.hide();
     if (!g.moved) {
       r.selectBlock(g.blockId, e.ctrlKey || e.metaKey);
       return;
     }
+    // Grid snapping would immediately undo an alignment to a neighbour that
+    // does not sit on the grid, so the snapped position is committed as-is.
+    const snapToGrid = !g.snapped;
     const ids = [...g.origins.keys()];
     if (ids.length > 1) r.engine.beginBatch('moveBlocks');
     for (const id of ids) {
@@ -383,7 +485,7 @@ export class InteractionController {
       r.clearGestureOverride(id);
       const el = r.getBlockElement(id);
       if (el) el.classList.remove('dragging');
-      if (override) r.engine.setBlockPosition(id, override.x, override.y);
+      if (override) r.engine.setBlockPosition(id, override.x, override.y, snapToGrid);
       r.syncBlockGeometry(id);
     }
     if (ids.length > 1) r.engine.endBatch();
@@ -563,10 +665,12 @@ export class InteractionController {
 
   /** Abort the in-flight gesture and restore visual state. */
   cancelGesture() {
+    this._cancelLongPress();
     const g = this.gesture;
     this.gesture = null;
     if (!g) return;
     const r = this.renderer;
+    r.guides.hide();
     if (g.type === 'drag' && g.origins) {
       for (const id of g.origins.keys()) {
         r.clearGestureOverride(id);

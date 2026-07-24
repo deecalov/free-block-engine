@@ -11,3 +11,6 @@ export { BlockRenderer } from './blockRenderer.js';
 export { History } from './history.js';
 export { connectionPoint } from './connectionLayer.js';
 export { Autosave, createAutosave } from './autosave.js';
+export { findAlignment } from './snapGuides.js';
+export { ContextMenu } from './contextMenu.js';
+export { exportToSVG, exportToPNG } from './exporter.js';

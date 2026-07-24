@@ -25,6 +25,8 @@ export class Block {
     this.links = new Map();
     this.position = { x: 0, y: 0 };
     this.size = { ...DEFAULT_BLOCK_SIZE };
+    /** Stacking order; higher blocks paint above lower ones. @type {number} */
+    this.zIndex = 0;
     /** Arbitrary user data preserved by export/import. @type {Record<string, unknown>} */
     this.data = {};
     const now = new Date().toISOString();
@@ -113,6 +115,7 @@ export class Block {
       links: Array.from(this.links.entries()).map(([id, meta]) => ({ id, ...meta })),
       position: { ...this.position },
       size: { ...this.size },
+      zIndex: this.zIndex,
       data: this.data,
       metadata: { ...this.metadata },
     };
@@ -147,6 +150,9 @@ export class Block {
     }
     if (raw.size && Number.isFinite(raw.size.width) && Number.isFinite(raw.size.height)) {
       block.size = { width: raw.size.width, height: raw.size.height };
+    }
+    if (Number.isFinite(raw.zIndex)) {
+      block.zIndex = raw.zIndex;
     }
 
     const data = raw.data ?? raw.customData;

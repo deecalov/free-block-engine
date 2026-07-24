@@ -38,10 +38,15 @@
 - **Read-only mode** — display graphs without allowing edits
 - **Optional keyboard shortcuts** — undo/redo, select all, duplicate, delete and arrow-key nudging (`keyboardShortcuts: true`)
 - **Custom content rendering** — plug in your own block renderer (markdown, HTML, …) via the `renderContent` hook
+- **Light and dark themes** — a built-in dark preset plus `prefers-color-scheme` support (`theme: 'auto'`)
+- **Alignment guides** — dragged blocks snap to the edges and centers of their neighbours (`snapGuides: true`)
+- **Context menu** — right-click or long-press, keyboard operable and fully customizable (`contextMenu: true`)
+- **Stacking order** — blocks come to the front on select and drag; the order is exported with the board
 
 ### Data
 
 - **Import / Export** — versioned JSON with validation, dangling-link pruning and legacy-format support
+- **Image export** — the board as standalone SVG or a PNG blob
 - **Autosave** — debounced localStorage persistence with `createAutosave()`
 - **Custom data** — a serializable `data` payload on every block survives export/import
 - **Search** — real-time content search across all blocks
@@ -51,7 +56,7 @@
 - **Zero dependencies** — pure JavaScript, no runtime packages
 - **ESM / CJS / browser global** builds + TypeScript declarations generated from JSDoc, with fully typed engine events
 - **Leak-free renderer** — one delegated Pointer Events pipeline, `destroy()` releases everything; multiple instances can coexist on a page
-- **Incremental rendering** — engine events update only the affected DOM nodes
+- **Incremental rendering** — engine events update only the affected DOM nodes, with optional offscreen culling for large boards
 - **Tested** — Vitest + jsdom suite for engine and renderer, CI via GitHub Actions
 
 ## 📦 Installation
@@ -124,6 +129,8 @@ engine.duplicateBlock(block.id);
 engine.deleteBlock(block.id);
 engine.clear();
 engine.arrangeBlocks(3); // grid layout in N columns, one undo step
+engine.bringToFront(block.id); // stacking order; not recorded in history
+engine.setBlockZIndex(block.id, 5); // explicit order (undoable)
 
 // Queries
 engine.getBlock(id);
@@ -169,7 +176,23 @@ const renderer = new BlockRenderer(engine, 'container-id', {
   maxZoom: 3,
   keyboardShortcuts: false, // Ctrl+Z/Y, Ctrl+A, Ctrl+D, Delete, arrow nudge
   renderContent: null, // custom content renderer, see Customization
+  theme: 'light', // 'light' | 'dark' | 'auto' (follows prefers-color-scheme)
+  snapGuides: false, // align dragged blocks to their neighbours
+  snapThreshold: 6, // screen px within which alignment kicks in
+  contextMenu: false, // right-click / long-press menu
+  contextMenuItems: null, // (target, defaults) => items
+  cullOffscreen: false, // hide blocks outside the viewport (large boards)
+  cullMargin: 400, // world-space margin kept visible when culling
 });
+
+// Theme
+renderer.setTheme('dark');
+renderer.getTheme(); // resolved scheme: 'light' | 'dark'
+renderer.onThemeChange = (theme) => console.log(theme); // fires in 'auto' mode
+
+// Image export
+const svg = renderer.exportToSVG(); // standalone SVG markup
+const png = await renderer.exportToPNG({ scale: 2 }); // Blob
 
 // Camera
 renderer.zoomBy(1.2); // multiply zoom (optionally around a pointer)
@@ -199,6 +222,7 @@ renderer.setDefaultLinkType('double');
 renderer.setViewMode('free'); // default: camera canvas with connections
 renderer.setViewMode('grid'); // auto-layout grid without connections
 renderer.setReadOnly(true);
+renderer.setCullOffscreen(true); // toggle culling at runtime
 
 // Lifecycle — removes all DOM and listeners
 renderer.destroy();
@@ -253,7 +277,20 @@ typing, and mutating ones are disabled in read-only mode.
 
 ## 🎨 Customization
 
+### Themes
+
+A dark preset ships with the library; `auto` follows the operating system and
+keeps following it while the renderer lives:
+
+```javascript
+const renderer = new BlockRenderer(engine, 'canvas', { theme: 'auto' });
+renderer.onThemeChange = (theme) => document.body.classList.toggle('dark', theme === 'dark');
+```
+
 ### Theming with CSS variables
+
+Both presets are built from the same custom properties, so overriding any of
+them gives you a custom palette:
 
 ```css
 #canvas.blocks-container {
@@ -261,13 +298,47 @@ typing, and mutating ones are disabled in read-only mode.
   --fbe-bg: #0f172a;
   --fbe-block-bg: #1e293b;
   --fbe-block-border: #334155;
+  --fbe-surface: #1e293b; /* popups and the minimap */
+  --fbe-text: #e2e8f0;
   --fbe-edge-single: #38bdf8;
   --fbe-edge-double: #f472b6;
 }
 ```
 
-Any renderer class (`.block`, `.block-type`, `.fbe-edge`, `.minimap`…) can also
-be overridden directly.
+Full list: `--fbe-accent`, `--fbe-accent-strong`, `--fbe-danger`, `--fbe-bg`,
+`--fbe-grid-line`, `--fbe-block-bg`, `--fbe-block-border`,
+`--fbe-block-selected-bg`, `--fbe-text`, `--fbe-text-muted`,
+`--fbe-text-subtle`, `--fbe-surface`, `--fbe-surface-muted`,
+`--fbe-surface-raised`, `--fbe-border`, `--fbe-shadow`, `--fbe-edge-single`,
+`--fbe-edge-double`, `--fbe-edge-label`. Any renderer class (`.block`,
+`.block-type`, `.fbe-edge`, `.minimap`…) can also be overridden directly.
+
+### Context menu
+
+```javascript
+const renderer = new BlockRenderer(engine, 'canvas', {
+  contextMenu: true,
+  // Amend or replace the defaults; return [] to suppress the menu.
+  contextMenuItems: (target, defaults) =>
+    target.type === 'block'
+      ? [
+          ...defaults,
+          { separator: true },
+          { label: 'Send to review', action: () => review(target.blockId) },
+        ]
+      : defaults,
+});
+```
+
+### Exporting an image
+
+```javascript
+const svg = renderer.exportToSVG({ padding: 40 }); // string
+const png = await renderer.exportToPNG({ scale: 2 }); // Blob
+```
+
+Both are built from the model rather than the live DOM, so the result does not
+depend on what is currently scrolled into view.
 
 ### Custom block types and data
 
@@ -349,6 +420,7 @@ free-block-engine/
 │   ├── connectionLayer.js  # SVG edges, arrow markers, labels
 │   ├── minimap.js          # Navigable minimap
 │   ├── linkEditor.js       # Link editor popup (block & edge modes)
+│   ├── autosave.js         # Debounced persistence into localStorage
 │   └── styles.js           # Injected stylesheet (CSS variables)
 ├── dist/                   # ESM, CJS, browser-global builds + .d.ts
 ├── tests/                  # Vitest + jsdom suite
@@ -362,13 +434,19 @@ See [docs/architecture.md](docs/architecture.md) for the design details
 ## 🔧 Development
 
 ```bash
-npm install        # install dev dependencies
-npm run dev        # static dev server for the demo (http://localhost:8123)
-npm test           # run the Vitest suite
-npm run lint       # ESLint
-npm run format     # Prettier
-npm run build      # build dist/ (ESM, CJS, global, types)
+npm install         # install dev dependencies
+npm run dev         # static dev server for the demo (http://localhost:8123)
+npm test            # run the Vitest suite
+npm run test:coverage # the same with a coverage report and thresholds
+npm run lint        # ESLint
+npm run format      # Prettier
+npm run build       # build dist/ (ESM, CJS, global, types)
+npm run size        # check the minified bundle against the size budget
 ```
+
+The published bundles target ES2020 and run anywhere Node 18+ does, but
+**development requires Node 20+** — Vitest 4 and ESLint 10 dropped Node 18.
+CI runs the test suite on Node 20, 22 and 24.
 
 `dist/` is git-ignored (generated output). Run `npm run build` once after
 cloning — the demo (`example.html`) loads `dist/free-block-engine.global.js`.

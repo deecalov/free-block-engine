@@ -35,8 +35,16 @@
       <div class="separator"></div>
       <input type="text" id="searchInput" placeholder="Search blocks..." onkeyup="searchBlocks()" />
       <div class="separator"></div>
+      <select id="themeSelect" onchange="themeChanged()" title="Colour theme">
+        <option value="light">Light</option>
+        <option value="dark">Dark</option>
+        <option value="auto">Auto</option>
+      </select>
+      <div class="separator"></div>
       <button onclick="exportData()">Export</button>
       <button onclick="importData()">Import</button>
+      <button onclick="exportSvg()">SVG</button>
+      <button onclick="exportPng()">PNG</button>
       <input
         type="file"
         id="importFile"
@@ -58,7 +66,8 @@
       &bull; Drag empty canvas to lasso-select, Ctrl+click for multi-select<br />
       &bull; Ctrl+wheel to zoom, Space+drag or middle mouse to pan<br />
       &bull; Ctrl+Z / Ctrl+Y — undo / redo, Ctrl+D — duplicate, Delete — remove<br />
-      &bull; Ctrl+A — select all, arrow keys — nudge selection (Shift for 1px)
+      &bull; Ctrl+A — select all, arrow keys — nudge selection (Shift for 1px)<br />
+      &bull; Right-click for a context menu; drag a block to see alignment guides
     </div>
 
     <script src="dist/free-block-engine.global.js"></script>

@@ -10,6 +10,10 @@ import {
   History, // undo/redo stack (used internally, exported for extension)
   Autosave, // debounced storage persistence helper
   createAutosave, // factory for Autosave
+  ContextMenu, // context menu component (used internally)
+  exportToSVG, // board → standalone SVG markup
+  exportToPNG, // board → PNG blob (browser only)
+  findAlignment, // pure alignment maths behind the snap guides
   LINK_TYPES, // ['single', 'reverse', 'double']
   DEFAULT_BLOCK_SIZE, // { width: 250, height: 150 }
   connectionPoint, // pure geometry helper used by the connection layer
@@ -46,6 +50,8 @@ The browser-global build exposes the same names under `window.FreeBlockEngine`.
 | `setBlockSize(id, width, height)`                | `boolean`       | Undoable; clamps to minimums                                               |
 | `setBlockData(id, data)`                         | `boolean`       | Undoable; replaces the serializable `data` payload                         |
 | `duplicateBlock(id)`                             | `Block \| null` | Copies content/type/size/data (not links), offsets position                |
+| `bringToFront(id)`                               | `boolean`       | Raises the block; **not** undoable, but persisted by export                |
+| `setBlockZIndex(id, zIndex)`                     | `boolean`       | Undoable; explicit stacking order                                          |
 | `deleteBlock(id)`                                | `boolean`       | Undoable; removes all links pointing at the block                          |
 | `clear()`                                        | `void`          | Undoable; removes everything                                               |
 | `arrangeBlocks(columns = 3)`                     | `void`          | Grid layout; one undo step                                                 |
@@ -65,7 +71,11 @@ Self-links and unknown types are rejected (`false`).
 | `unlinkBlocks(fromId, toId)`                  | `boolean`        | Undoable; `false` if nothing to unlink                |
 | `getLinkInfo(fromId, toId)`                   | `object \| null` | `{ type, from, to, label }`, canonical direction      |
 | `getOutgoingLinks(id)`                        | `Block[]`        |                                                       |
-| `getIncomingLinks(id)`                        | `Block[]`        |                                                       |
+| `getIncomingLinks(id)`                        | `Block[]`        | Served from a reverse index; ordered by link creation |
+
+The engine maintains that reverse index internally, so mutating `block.links`
+directly (rather than through the methods above) leaves it stale. As with the
+direct model setters, go through the engine.
 
 ### Undo / Redo
 
@@ -112,6 +122,7 @@ TypeScript infers the payload type from the event name.
 | ----------------------- | ---------------------------------------------------- |
 | `id`, `content`, `type` | Identity and payload                                 |
 | `position` / `size`     | `{x, y}` / `{width, height}` (default 250x150)       |
+| `zIndex`                | Stacking order; higher paints above lower (0)        |
 | `links`                 | `Map<blockId, {type, label, createdAt}>`             |
 | `data`                  | Custom serializable object (survives export/import)  |
 | `metadata`              | `{createdAt, updatedAt}` ISO strings                 |
@@ -136,6 +147,13 @@ Prefer mutating blocks through engine methods — direct setters
 | `minZoom` / `maxZoom` | `0.2` / `3` | Camera zoom bounds                        |
 | `keyboardShortcuts`   | `false`     | Built-in hotkeys (see below)              |
 | `renderContent`       | `null`      | Custom content renderer hook (see below)  |
+| `theme`               | `'light'`   | `'light'`, `'dark'` or `'auto'`           |
+| `snapGuides`          | `false`     | Alignment snapping while dragging         |
+| `snapThreshold`       | `6`         | Screen px within which alignment applies  |
+| `contextMenu`         | `false`     | Right-click and long-press menu           |
+| `contextMenuItems`    | `null`      | `(target, defaults) => items` hook        |
+| `cullOffscreen`       | `false`     | Hide blocks outside the viewport          |
+| `cullMargin`          | `400`       | Margin kept visible when culling          |
 
 The container must have a height (the stylesheet sizes it `100%`).
 
@@ -204,13 +222,70 @@ back to the default behavior. Sanitize any HTML you inject.
 
 ### Modes & lifecycle
 
-| Method                                    | Notes                                                   |
-| ----------------------------------------- | ------------------------------------------------------- |
-| `setViewMode(mode)`                       | `'free'` (camera canvas) or `'grid'` (auto-layout list) |
-| `setReadOnly(readOnly)`                   |                                                         |
-| `render()`                                | Full rebuild (rarely needed — updates are incremental)  |
-| `updateConnections()` / `updateMinimap()` | Manual refresh helpers                                  |
-| `destroy()`                               | Removes all DOM and detaches every listener             |
+| Method                                        | Notes                                                   |
+| --------------------------------------------- | ------------------------------------------------------- |
+| `setViewMode(mode)`                           | `'free'` (camera canvas) or `'grid'` (auto-layout list) |
+| `setReadOnly(readOnly)`                       |                                                         |
+| `setTheme(theme)` / `getTheme()`              | Switch scheme; `getTheme()` resolves `'auto'`           |
+| `onThemeChange`                               | Callback fired when an `auto` theme follows the OS      |
+| `setCullOffscreen(enabled)`                   | Toggle culling; `applyCulling()` forces a pass          |
+| `exportToSVG(options?)`                       | Standalone SVG markup of the whole board                |
+| `exportToPNG(options?)`                       | `Promise<Blob>`; needs a browser (canvas)               |
+| `openContextMenu({clientX, clientY, target})` | Open the menu programmatically                          |
+| `render()`                                    | Full rebuild (rarely needed — updates are incremental)  |
+| `updateConnections()` / `updateMinimap()`     | Manual refresh helpers                                  |
+| `destroy()`                                   | Removes all DOM and detaches every listener             |
+
+### Themes
+
+`theme` accepts `'light'`, `'dark'` or `'auto'`. Both presets are built from
+the `--fbe-*` custom properties, so overriding those is enough for a custom
+palette. `'auto'` adds the `fbe-theme-auto` class, which a
+`prefers-color-scheme` media query picks up; the renderer also subscribes to
+the media query and reports flips through `onThemeChange`. `getTheme()`
+resolves `'auto'` to the scheme actually in effect. The subscription is
+dropped by `setTheme()` and `destroy()`.
+
+### Alignment guides
+
+With `snapGuides` the dragged block aligns to the edges and centers of its
+neighbours within `snapThreshold` screen pixels, drawing guide lines. When an
+alignment is active the position is committed **without** grid rounding —
+otherwise the grid would immediately pull the block off the alignment. The
+underlying maths is exported as `findAlignment(moving, others, threshold)`.
+
+### Context menu
+
+`contextMenu` adds a right-click and touch long-press (500 ms) menu with
+`role="menu"`, arrow/Home/End navigation and Escape to close. A finger that
+travels more than a few pixels cancels the long press, so panning is
+unaffected. In read-only mode the mutating entries are omitted.
+`contextMenuItems(target, defaults)` receives
+`{ type: 'block' | 'canvas', blockId, world }` and returns the items:
+`{ label, action?, separator?, disabled? }`. A thrown hook is logged and
+suppresses the menu.
+
+### Offscreen culling
+
+`cullOffscreen` hides blocks further than `cullMargin` from the visible world
+rect by toggling `.fbe-offscreen`. Elements stay in the renderer's map, so
+selection, geometry and host queries are unaffected. Blocks under an active
+gesture or containing the focused element are never hidden, and nothing is
+culled while the container has no measurable size. See
+[architecture.md](architecture.md) for the measured effect.
+
+### Image export
+
+`exportToSVG(engine, options?)` and the renderer method of the same name build
+the SVG from the model, so the output does not depend on the current camera or
+on which blocks are rendered. Options: `padding` (40), `theme`
+(`'light'`/`'dark'`; the renderer method defaults to its own theme) and
+`background` (true). Text is drawn with `<text>` and wrapped by estimated
+character width — `<foreignObject>` would look better but several browsers
+refuse to rasterize it.
+
+`exportToPNG(engine, options?)` additionally takes `scale` (2) and returns a
+`Promise<Blob>`. It rejects outside a browser or without canvas support.
 
 ### Theming
 

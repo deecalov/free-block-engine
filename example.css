@@ -5,6 +5,21 @@ body {
   overflow: hidden;
 }
 
+/* The library themes its own canvas; the demo chrome follows along. */
+body.dark {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+body.dark .toolbar {
+  background: #111827;
+}
+
+body.dark .help-text {
+  background: rgba(30, 41, 59, 0.95);
+  color: #e2e8f0;
+}
+
 .toolbar {
   background: #333;
   color: white;
