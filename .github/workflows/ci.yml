@@ -15,7 +15,7 @@ jobs:
         # Vitest 4 and ESLint 10 require Node 20+; 18 is not supported by the toolchain.
         node: [20, 22, 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -32,7 +32,7 @@ jobs:
     name: Lint, build and .NET example
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
