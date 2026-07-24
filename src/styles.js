@@ -10,6 +10,32 @@
 
 const STYLE_ID = 'block-renderer-styles';
 
+/**
+ * Dark palette. Declared once and applied both by the explicit
+ * `fbe-theme-dark` class and by `fbe-theme-auto` under a dark OS preference.
+ */
+const DARK_VARS = `
+    --fbe-accent: #3b82f6;
+    --fbe-accent-strong: #60a5fa;
+    --fbe-danger: #f87171;
+    --fbe-bg: #0f172a;
+    --fbe-grid-line: rgba(148, 163, 184, 0.12);
+    --fbe-block-bg: #1e293b;
+    --fbe-block-border: #334155;
+    --fbe-block-selected-bg: #1e3a5f;
+    --fbe-text: #e2e8f0;
+    --fbe-text-muted: #94a3b8;
+    --fbe-text-subtle: #64748b;
+    --fbe-surface: #1e293b;
+    --fbe-surface-muted: #334155;
+    --fbe-surface-raised: #24344c;
+    --fbe-border: #334155;
+    --fbe-shadow: rgba(0, 0, 0, 0.5);
+    --fbe-edge-single: #38bdf8;
+    --fbe-edge-double: #f472b6;
+    --fbe-edge-label: #cbd5e1;
+`;
+
 const CSS = `
   .blocks-container {
     --fbe-accent: #007bff;
@@ -20,14 +46,23 @@ const CSS = `
     --fbe-block-bg: #ffffff;
     --fbe-block-border: #e0e0e0;
     --fbe-block-selected-bg: #f0f8ff;
+    --fbe-text: #333333;
     --fbe-text-muted: #666;
+    --fbe-text-subtle: #999999;
+    --fbe-surface: #ffffff;
+    --fbe-surface-muted: #f5f5f5;
+    --fbe-surface-raised: #f9f9f9;
+    --fbe-border: #dddddd;
+    --fbe-shadow: rgba(0, 0, 0, 0.15);
     --fbe-edge-single: #007bff;
     --fbe-edge-double: #6f42c1;
+    --fbe-edge-label: #444444;
 
     position: relative;
     width: 100%;
     height: 100%;
     overflow: hidden;
+    color: var(--fbe-text);
     background: var(--fbe-bg);
     background-image:
       linear-gradient(var(--fbe-grid-line) 1px, transparent 1px),
@@ -68,6 +103,7 @@ const CSS = `
 
   .block {
     background: var(--fbe-block-bg);
+    color: var(--fbe-text);
     border: 2px solid var(--fbe-block-border);
     border-radius: 8px;
     padding: 15px;
@@ -79,7 +115,9 @@ const CSS = `
     user-select: none;
     overflow: hidden;
     box-sizing: border-box;
-    z-index: 2;
+    /* Per-block order comes from a custom property, not an inline z-index:
+       an inline value would beat the .dragging / :hover rules below. */
+    z-index: calc(2 + var(--fbe-z, 0));
   }
 
   .grid-mode .block {
@@ -92,14 +130,14 @@ const CSS = `
 
   .block:hover {
     border-color: var(--fbe-accent);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 8px var(--fbe-shadow);
     z-index: 10;
   }
 
   .block.selected {
     border-color: var(--fbe-accent);
     background: var(--fbe-block-selected-bg);
-    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.2);
+    box-shadow: 0 4px 12px color-mix(in srgb, var(--fbe-accent) 20%, transparent);
   }
 
   .block.dragging {
@@ -118,14 +156,18 @@ const CSS = `
     animation: fbe-flash 1.2s ease-out;
   }
 
+  .block.fbe-offscreen {
+    display: none;
+  }
+
   @keyframes fbe-flash {
-    0% { box-shadow: 0 0 0 4px rgba(0, 123, 255, 0.55); }
-    100% { box-shadow: 0 0 0 0 rgba(0, 123, 255, 0); }
+    0% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--fbe-accent) 55%, transparent); }
+    100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--fbe-accent) 0%, transparent); }
   }
 
   .block.linking-source {
     border-color: var(--fbe-accent);
-    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.35);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--fbe-accent) 35%, transparent);
   }
 
   .blocks-container.linking .block {
@@ -174,13 +216,13 @@ const CSS = `
     outline: none;
     padding: 5px;
     padding-bottom: 25px;
-    background: #f9f9f9;
+    background: var(--fbe-surface-raised);
     border-radius: 4px;
   }
 
   .block-content:empty::before {
     content: attr(data-placeholder);
-    color: #aaa;
+    color: var(--fbe-text-subtle);
     pointer-events: none;
   }
 
@@ -238,7 +280,8 @@ const CSS = `
   }
 
   .block-action {
-    background: #f0f0f0;
+    background: var(--fbe-surface-muted);
+    color: var(--fbe-text);
     border: none;
     padding: 5px 10px;
     border-radius: 4px;
@@ -260,7 +303,7 @@ const CSS = `
 
   .block-metadata {
     font-size: 10px;
-    color: #999;
+    color: var(--fbe-text-subtle);
     margin-top: 10px;
   }
 
@@ -365,7 +408,7 @@ const CSS = `
   .fbe-edge .edge-label {
     font-size: 11px;
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    fill: #444;
+    fill: var(--fbe-edge-label);
     stroke: var(--fbe-bg);
     stroke-width: 3px;
     paint-order: stroke;
@@ -388,21 +431,46 @@ const CSS = `
     pointer-events: none;
   }
 
+  .fbe-guides {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 950;
+  }
+
+  .fbe-guide {
+    position: absolute;
+    background: var(--fbe-danger);
+    opacity: 0.75;
+  }
+
+  .fbe-guide-vertical {
+    width: 1px;
+  }
+
+  .fbe-guide-horizontal {
+    height: 1px;
+  }
+
   .fbe-lasso {
     position: absolute;
     border: 1px dashed var(--fbe-accent);
-    background: rgba(0, 123, 255, 0.08);
+    background: color-mix(in srgb, var(--fbe-accent) 8%, transparent);
     pointer-events: none;
     z-index: 900;
   }
 
   .link-editor-popup {
     position: absolute;
-    background: white;
-    border: 1px solid #ddd;
+    background: var(--fbe-surface);
+    color: var(--fbe-text);
+    border: 1px solid var(--fbe-border);
     border-radius: 8px;
     padding: 15px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: 0 4px 12px var(--fbe-shadow);
     z-index: 1001;
     min-width: 260px;
     cursor: default;
@@ -411,7 +479,7 @@ const CSS = `
   .link-editor-popup h3 {
     margin: 0 0 10px 0;
     font-size: 16px;
-    color: #333;
+    color: var(--fbe-text);
   }
 
   .link-editor-list {
@@ -424,7 +492,7 @@ const CSS = `
     border: 1px solid var(--fbe-block-border);
     border-radius: 4px;
     margin-bottom: 8px;
-    background: #f9f9f9;
+    background: var(--fbe-surface-raised);
   }
 
   .link-editor-item-header {
@@ -437,7 +505,7 @@ const CSS = `
   .link-editor-item-title {
     font-weight: bold;
     font-size: 14px;
-    color: #333;
+    color: var(--fbe-text);
   }
 
   .link-editor-item-content {
@@ -458,16 +526,17 @@ const CSS = `
 
   .link-editor-item-actions button {
     padding: 4px 8px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--fbe-border);
     border-radius: 3px;
-    background: white;
+    background: var(--fbe-surface);
+    color: var(--fbe-text);
     cursor: pointer;
     font-size: 12px;
     transition: all 0.2s;
   }
 
   .link-editor-item-actions button:hover {
-    background: #f0f0f0;
+    background: var(--fbe-surface-muted);
     border-color: var(--fbe-accent);
   }
 
@@ -493,8 +562,10 @@ const CSS = `
     box-sizing: border-box;
     margin-top: 6px;
     padding: 4px 6px;
-    border: 1px solid #ddd;
+    border: 1px solid var(--fbe-border);
     border-radius: 3px;
+    background: var(--fbe-surface);
+    color: var(--fbe-text);
     font-size: 12px;
   }
 
@@ -509,7 +580,7 @@ const CSS = `
     padding: 8px;
     border: 2px dashed var(--fbe-accent);
     border-radius: 4px;
-    background: #f0f8ff;
+    background: color-mix(in srgb, var(--fbe-accent) 8%, transparent);
     color: var(--fbe-accent);
     cursor: pointer;
     font-size: 14px;
@@ -517,7 +588,7 @@ const CSS = `
   }
 
   .link-editor-add-button:hover {
-    background: #e6f2ff;
+    background: color-mix(in srgb, var(--fbe-accent) 16%, transparent);
     border-style: solid;
   }
 
@@ -539,7 +610,7 @@ const CSS = `
   }
 
   .link-editor-close:hover {
-    color: #333;
+    color: var(--fbe-text);
   }
 
   .minimap {
@@ -548,8 +619,8 @@ const CSS = `
     right: 20px;
     width: 200px;
     height: 150px;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #ddd;
+    background: color-mix(in srgb, var(--fbe-surface) 92%, transparent);
+    border: 1px solid var(--fbe-border);
     border-radius: 4px;
     overflow: hidden;
     z-index: 100;
@@ -564,19 +635,71 @@ const CSS = `
   .minimap-viewport {
     position: absolute;
     border: 2px solid var(--fbe-accent);
-    background: rgba(0, 123, 255, 0.1);
+    background: color-mix(in srgb, var(--fbe-accent) 10%, transparent);
     pointer-events: none;
   }
 
   .minimap-block {
     position: absolute;
-    background: #666;
+    background: var(--fbe-text-muted);
     border-radius: 2px;
     pointer-events: none;
   }
 
   .minimap-block.selected {
     background: var(--fbe-accent);
+  }
+
+  .fbe-context-menu {
+    position: absolute;
+    min-width: 180px;
+    padding: 4px;
+    background: var(--fbe-surface);
+    color: var(--fbe-text);
+    border: 1px solid var(--fbe-border);
+    border-radius: 8px;
+    box-shadow: 0 6px 16px var(--fbe-shadow);
+    z-index: 1002;
+    cursor: default;
+    font-size: 13px;
+  }
+
+  .fbe-context-item {
+    display: block;
+    width: 100%;
+    padding: 6px 10px;
+    border: none;
+    border-radius: 4px;
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .fbe-context-item:hover:not([disabled]),
+  .fbe-context-item:focus-visible {
+    background: color-mix(in srgb, var(--fbe-accent) 14%, transparent);
+    outline: none;
+  }
+
+  .fbe-context-item[disabled] {
+    color: var(--fbe-text-subtle);
+    cursor: default;
+  }
+
+  .fbe-context-separator {
+    height: 1px;
+    margin: 4px 6px;
+    background: var(--fbe-border);
+  }
+
+  .blocks-container.fbe-theme-dark {
+${DARK_VARS}  }
+
+  @media (prefers-color-scheme: dark) {
+    .blocks-container.fbe-theme-auto {
+${DARK_VARS}    }
   }
 `;
 

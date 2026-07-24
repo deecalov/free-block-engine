@@ -424,6 +424,238 @@ describe('BlockRenderer — keyboard shortcuts', () => {
   });
 });
 
+describe('BlockRenderer — offscreen culling', () => {
+  /** @type {BlockEngine} */
+  let engine;
+  /** @type {HTMLElement} */
+  let container;
+  /** @type {BlockRenderer} */
+  let renderer;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    // jsdom does no layout; culling needs a measurable container.
+    Object.defineProperty(container, 'clientWidth', { value: 800, configurable: true });
+    Object.defineProperty(container, 'clientHeight', { value: 600, configurable: true });
+    document.body.appendChild(container);
+    engine = new BlockEngine();
+    renderer = new BlockRenderer(engine, container, { cullOffscreen: true, cullMargin: 100 });
+  });
+
+  afterEach(() => {
+    renderer.destroy();
+    container.remove();
+    document.body.innerHTML = '';
+  });
+
+  const isHidden = (id) => renderer.getBlockElement(id).classList.contains('fbe-offscreen');
+
+  it('hides blocks outside the viewport and keeps them in the element map', () => {
+    const near = engine.createBlock('near', 'default', { x: 0, y: 0 });
+    const far = engine.createBlock('far', 'default', { x: 20000, y: 20000 });
+
+    expect(isHidden(near.id)).toBe(false);
+    expect(isHidden(far.id)).toBe(true);
+    // Culled blocks stay queryable — selection and geometry still work.
+    expect(renderer.getBlockElement(far.id)).toBeTruthy();
+    renderer.selectAll();
+    expect(renderer.selectedBlocks.size).toBe(2);
+  });
+
+  it('reveals a block once the camera or the block itself moves into view', () => {
+    const far = engine.createBlock('far', 'default', { x: 20000, y: 20000 });
+    expect(isHidden(far.id)).toBe(true);
+
+    engine.setBlockPosition(far.id, 0, 0);
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(false);
+
+    engine.setBlockPosition(far.id, 20000, 20000);
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(true);
+
+    renderer.centerOnBlock(far.id);
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(false);
+  });
+
+  it('never hides the block being dragged or the one holding focus', () => {
+    const far = engine.createBlock('far', 'default', { x: 20000, y: 20000 });
+    expect(isHidden(far.id)).toBe(true);
+
+    renderer.setGestureOverride(far.id, { x: 20000, y: 20000 });
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(false);
+    renderer.clearGestureOverride(far.id);
+
+    const contentEl = renderer.getBlockElement(far.id).querySelector('.block-content');
+    contentEl.tabIndex = 0; // jsdom won't focus a bare contenteditable
+    contentEl.focus();
+    expect(document.activeElement).toBe(contentEl);
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(false);
+    contentEl.blur();
+
+    renderer.applyCulling();
+    expect(isHidden(far.id)).toBe(true);
+  });
+
+  it('never culls while the container has no measurable size', () => {
+    const bare = document.createElement('div');
+    document.body.appendChild(bare);
+    const bareEngine = new BlockEngine();
+    const bareRenderer = new BlockRenderer(bareEngine, bare, { cullOffscreen: true });
+    const far = bareEngine.createBlock('far', 'default', { x: 20000, y: 20000 });
+
+    bareRenderer.applyCulling();
+    expect(bareRenderer.getBlockElement(far.id).classList.contains('fbe-offscreen')).toBe(false);
+    bareRenderer.destroy();
+    bare.remove();
+  });
+
+  it('drops all culling when the option is turned off', () => {
+    const far = engine.createBlock('far', 'default', { x: 20000, y: 20000 });
+    expect(isHidden(far.id)).toBe(true);
+
+    renderer.setCullOffscreen(false);
+    expect(isHidden(far.id)).toBe(false);
+  });
+
+  it('does not cull when the option is disabled by default', () => {
+    const other = document.createElement('div');
+    document.body.appendChild(other);
+    const otherEngine = new BlockEngine();
+    const otherRenderer = new BlockRenderer(otherEngine, other);
+    const far = otherEngine.createBlock('far', 'default', { x: 20000, y: 20000 });
+
+    expect(otherRenderer.getBlockElement(far.id).classList.contains('fbe-offscreen')).toBe(false);
+    otherRenderer.destroy();
+    other.remove();
+  });
+});
+
+describe('BlockRenderer — stacking order', () => {
+  /** @type {BlockEngine} */
+  let engine;
+  /** @type {BlockRenderer} */
+  let renderer;
+  /** @type {HTMLElement} */
+  let container;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    engine = new BlockEngine();
+    renderer = new BlockRenderer(engine, container);
+  });
+
+  afterEach(() => {
+    renderer.destroy();
+    container.remove();
+    document.body.innerHTML = '';
+  });
+
+  const zOf = (id) => renderer.getBlockElement(id).style.getPropertyValue('--fbe-z');
+
+  it('writes the order to a custom property, not an inline z-index', () => {
+    const a = engine.createBlock('a', 'default', { x: 0, y: 0 });
+    const el = renderer.getBlockElement(a.id);
+    expect(zOf(a.id)).toBe('0');
+    // An inline z-index would override .dragging and :hover.
+    expect(el.style.zIndex).toBe('');
+
+    engine.setBlockZIndex(a.id, 5);
+    expect(zOf(a.id)).toBe('5');
+  });
+
+  it('raises a block when it is selected', () => {
+    const a = engine.createBlock('a', 'default', { x: 0, y: 0 });
+    const b = engine.createBlock('b', 'default', { x: 400, y: 0 });
+
+    renderer.selectBlock(b.id);
+    expect(Number(zOf(b.id))).toBeGreaterThan(Number(zOf(a.id)));
+
+    renderer.selectBlock(a.id);
+    expect(Number(zOf(a.id))).toBeGreaterThan(Number(zOf(b.id)));
+  });
+
+  it('keeps the order across a full re-render', () => {
+    const a = engine.createBlock('a', 'default', { x: 0, y: 0 });
+    engine.createBlock('b', 'default', { x: 400, y: 0 });
+    engine.setBlockZIndex(a.id, 9);
+
+    renderer.render();
+    expect(zOf(a.id)).toBe('9');
+  });
+});
+
+describe('BlockRenderer — theming', () => {
+  /** @type {HTMLElement} */
+  let container;
+
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    window.__prefersDark = false;
+  });
+
+  afterEach(() => {
+    document.body.innerHTML = '';
+    window.__prefersDark = false;
+  });
+
+  it('defaults to light and switches to dark on demand', () => {
+    const renderer = new BlockRenderer(new BlockEngine(), container);
+    expect(container.classList.contains('fbe-theme-dark')).toBe(false);
+    expect(renderer.getTheme()).toBe('light');
+
+    renderer.setTheme('dark');
+    expect(container.classList.contains('fbe-theme-dark')).toBe(true);
+    expect(renderer.getTheme()).toBe('dark');
+
+    renderer.setTheme('light');
+    expect(container.classList.contains('fbe-theme-dark')).toBe(false);
+    renderer.destroy();
+  });
+
+  it('follows the OS preference in auto mode and reports changes', () => {
+    window.__prefersDark = true;
+    const renderer = new BlockRenderer(new BlockEngine(), container, { theme: 'auto' });
+    expect(container.classList.contains('fbe-theme-auto')).toBe(true);
+    expect(renderer.getTheme()).toBe('dark');
+
+    const seen = [];
+    renderer.onThemeChange = (theme) => seen.push(theme);
+    window.__prefersDark = false;
+    window.__emitThemeChange();
+    expect(seen).toEqual(['light']);
+    expect(renderer.getTheme()).toBe('light');
+    renderer.destroy();
+  });
+
+  it('unsubscribes from the media query when the theme changes or on destroy', () => {
+    const before = window.__themeListenerCount();
+    const renderer = new BlockRenderer(new BlockEngine(), container, { theme: 'auto' });
+    expect(window.__themeListenerCount()).toBe(before + 1);
+
+    renderer.setTheme('dark'); // leaving auto drops the subscription
+    expect(window.__themeListenerCount()).toBe(before);
+
+    renderer.setTheme('auto');
+    expect(window.__themeListenerCount()).toBe(before + 1);
+    renderer.destroy();
+    expect(window.__themeListenerCount()).toBe(before);
+    expect(container.classList.contains('fbe-theme-auto')).toBe(false);
+  });
+
+  it('ignores unknown theme names', () => {
+    const renderer = new BlockRenderer(new BlockEngine(), container, { theme: 'neon' });
+    expect(renderer.options.theme).toBe('light');
+    expect(renderer.getTheme()).toBe('light');
+    renderer.destroy();
+  });
+});
+
 describe('BlockRenderer — custom content hook', () => {
   /** @type {BlockEngine} */
   let engine;

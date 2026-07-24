@@ -51,6 +51,13 @@ export class BlockEngine {
   constructor(settings = {}) {
     /** @type {Map<string, Block>} */
     this.blocks = new Map();
+    /**
+     * Reverse link index: target id → ids of blocks linking to it. Keeps
+     * getIncomingLinks() O(k) instead of scanning every block, which is what
+     * made rendering and dragging O(n²).
+     * @type {Map<string, Set<string>>}
+     */
+    this._incoming = new Map();
     /** @type {Map<string, Array<(data: never) => void>>} */
     this.eventListeners = new Map();
     /** @type {EngineSettings} */
@@ -194,6 +201,64 @@ export class BlockEngine {
     this.emit('historyChanged', this.getHistoryState());
   }
 
+  // ----------------------------------------------------------- link index
+
+  /**
+   * Record `fromId → toId` in the reverse index.
+   * @param {string} fromId
+   * @param {string} toId
+   */
+  _indexAdd(fromId, toId) {
+    let sources = this._incoming.get(toId);
+    if (!sources) {
+      sources = new Set();
+      this._incoming.set(toId, sources);
+    }
+    sources.add(fromId);
+  }
+
+  /**
+   * Drop `fromId → toId` from the reverse index.
+   * @param {string} fromId
+   * @param {string} toId
+   */
+  _indexRemove(fromId, toId) {
+    const sources = this._incoming.get(toId);
+    if (!sources) return;
+    sources.delete(fromId);
+    if (sources.size === 0) {
+      this._incoming.delete(toId);
+    }
+  }
+
+  /** Add a link to a block and keep the index in sync. */
+  _addLink(fromBlock, toId, linkType, label) {
+    fromBlock.addLink(toId, linkType, label);
+    this._indexAdd(fromBlock.id, toId);
+  }
+
+  /** Remove a link from a block and keep the index in sync. */
+  _removeLink(fromBlock, toId) {
+    fromBlock.removeLink(toId);
+    this._indexRemove(fromBlock.id, toId);
+  }
+
+  /** Ids of blocks linking to the given block. @returns {string[]} */
+  _incomingIds(id) {
+    const sources = this._incoming.get(id);
+    return sources ? [...sources] : [];
+  }
+
+  /** Rebuild the whole index from the current blocks (import/clear/undo). */
+  _rebuildIndex() {
+    this._incoming.clear();
+    for (const block of this.blocks.values()) {
+      for (const targetId of block.links.keys()) {
+        this._indexAdd(block.id, targetId);
+      }
+    }
+  }
+
   // ---------------------------------------------------------------- blocks
 
   /**
@@ -235,10 +300,14 @@ export class BlockEngine {
   _restoreBlock(snapshot, incomingLinks) {
     const block = Block.fromJSON(snapshot);
     this.blocks.set(block.id, block);
+    for (const targetId of block.links.keys()) {
+      this._indexAdd(block.id, targetId);
+    }
     for (const { fromId, meta } of incomingLinks) {
       const source = this.blocks.get(fromId);
       if (source) {
         source.links.set(block.id, { ...meta });
+        this._indexAdd(fromId, block.id);
       }
     }
     this.emit('blockRestored', block);
@@ -260,12 +329,17 @@ export class BlockEngine {
     const snapshot = block.toJSON();
     const outgoing = [...block.links.keys()];
     const incoming = [];
-    this.blocks.forEach((other) => {
-      if (other.id !== id && other.hasLink(id)) {
+    for (const fromId of this._incomingIds(id)) {
+      const other = this.blocks.get(fromId);
+      if (other && other.id !== id) {
         incoming.push({ fromId: other.id, meta: { ...other.links.get(id) } });
-        other.removeLink(id);
+        this._removeLink(other, id);
       }
-    });
+    }
+    for (const targetId of outgoing) {
+      this._indexRemove(id, targetId);
+    }
+    this._incoming.delete(id);
     this.blocks.delete(id);
 
     this._record(
@@ -306,11 +380,13 @@ export class BlockEngine {
     if (this.blocks.size === 0) return;
     const before = this.exportToJSON();
     this.blocks.clear();
+    this._incoming.clear();
     this._record(
       'clear',
       () => this._loadSnapshot(before),
       () => {
         this.blocks.clear();
+        this._incoming.clear();
         this.emit('engineCleared');
       }
     );
@@ -441,6 +517,55 @@ export class BlockEngine {
     return true;
   }
 
+  /**
+   * Raise a block above all others.
+   *
+   * Deliberately **not** undoable: the renderer calls this on every select
+   * and drag, and recording it would bury real edits under stacking noise.
+   * The new order is still persisted by `exportToJSON()`.
+   *
+   * @param {string} id
+   * @returns {boolean} false when the block is unknown or already on top.
+   */
+  bringToFront(id) {
+    const block = this.blocks.get(id);
+    if (!block) return false;
+    let max = 0;
+    let alone = true;
+    for (const other of this.blocks.values()) {
+      if (other.id === id) continue;
+      alone = false;
+      if (other.zIndex > max) max = other.zIndex;
+    }
+    if (alone || block.zIndex > max) return false;
+    block.zIndex = max + 1;
+    block.touch();
+    this.emit('blockUpdated', block);
+    return true;
+  }
+
+  /**
+   * Set the stacking order of a block explicitly (undoable).
+   * @param {string} id
+   * @param {number} zIndex
+   * @returns {boolean}
+   */
+  setBlockZIndex(id, zIndex) {
+    const block = this.blocks.get(id);
+    if (!block || !Number.isFinite(zIndex)) return false;
+    const prev = block.zIndex;
+    if (prev === zIndex) return true;
+    block.zIndex = zIndex;
+    block.touch();
+    this._record(
+      'setZIndex',
+      () => this.setBlockZIndex(id, prev),
+      () => this.setBlockZIndex(id, zIndex)
+    );
+    this.emit('blockUpdated', block);
+    return true;
+  }
+
   // ----------------------------------------------------------------- links
 
   /**
@@ -461,15 +586,15 @@ export class BlockEngine {
 
     const prev = this._capturePairState(fromId, toId);
 
-    fromBlock.removeLink(toId);
-    toBlock.removeLink(fromId);
+    this._removeLink(fromBlock, toId);
+    this._removeLink(toBlock, fromId);
     if (linkType === 'single') {
-      fromBlock.addLink(toId, 'single', label);
+      this._addLink(fromBlock, toId, 'single', label);
     } else if (linkType === 'reverse') {
-      toBlock.addLink(fromId, 'single', label);
+      this._addLink(toBlock, fromId, 'single', label);
     } else {
-      fromBlock.addLink(toId, 'double', label);
-      toBlock.addLink(fromId, 'double', label);
+      this._addLink(fromBlock, toId, 'double', label);
+      this._addLink(toBlock, fromId, 'double', label);
     }
 
     const next = this._capturePairState(fromId, toId);
@@ -547,8 +672,8 @@ export class BlockEngine {
     const prev = this._capturePairState(fromId, toId);
     if (!prev.ab && !prev.ba) return false;
 
-    if (fromBlock) fromBlock.removeLink(toId);
-    if (toBlock) toBlock.removeLink(fromId);
+    if (fromBlock) this._removeLink(fromBlock, toId);
+    if (toBlock) this._removeLink(toBlock, fromId);
 
     this._record(
       'unlinkBlocks',
@@ -591,12 +716,22 @@ export class BlockEngine {
   }
 
   /**
-   * Blocks that link to the given block.
+   * Blocks that link to the given block. Served from the reverse index, so
+   * the order is the order in which the links were created rather than the
+   * order of the blocks themselves.
+   *
    * @param {string} id
    * @returns {Block[]}
    */
   getIncomingLinks(id) {
-    return this.getAllBlocks().filter((block) => block.hasLink(id));
+    const sources = this._incoming.get(id);
+    if (!sources) return [];
+    const blocks = [];
+    for (const fromId of sources) {
+      const block = this.blocks.get(fromId);
+      if (block) blocks.push(block);
+    }
+    return blocks;
   }
 
   /**
@@ -627,10 +762,20 @@ export class BlockEngine {
     const a = this.blocks.get(aId);
     const b = this.blocks.get(bId);
     if (!a || !b) return;
-    if (state.ab) a.links.set(bId, { ...state.ab });
-    else a.links.delete(bId);
-    if (state.ba) b.links.set(aId, { ...state.ba });
-    else b.links.delete(aId);
+    if (state.ab) {
+      a.links.set(bId, { ...state.ab });
+      this._indexAdd(aId, bId);
+    } else {
+      a.links.delete(bId);
+      this._indexRemove(aId, bId);
+    }
+    if (state.ba) {
+      b.links.set(aId, { ...state.ba });
+      this._indexAdd(bId, aId);
+    } else {
+      b.links.delete(aId);
+      this._indexRemove(bId, aId);
+    }
     this.emit('linksChanged', { fromId: aId, toId: bId });
   }
 
@@ -744,6 +889,7 @@ export class BlockEngine {
     if (!data || !Array.isArray(data.blocks)) return false;
 
     this.blocks.clear();
+    this._incoming.clear();
 
     if (data.settings && typeof data.settings === 'object') {
       for (const key of Object.keys(this.settings)) {
@@ -768,6 +914,7 @@ export class BlockEngine {
         }
       }
     });
+    this._rebuildIndex();
 
     this.emit('blocksImported', { count: this.blocks.size });
     return true;

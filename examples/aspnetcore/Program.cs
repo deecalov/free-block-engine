@@ -18,3 +18,10 @@ app.UseRouting();
 app.MapDefaultControllerRoute();
 
 app.Run();
+
+/// <summary>
+/// Exposed so integration tests can bootstrap the app with
+/// <c>WebApplicationFactory&lt;Program&gt;</c>; top-level statements would
+/// otherwise generate an internal entry point class.
+/// </summary>
+public partial class Program;

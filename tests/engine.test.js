@@ -372,6 +372,176 @@ describe('BlockEngine — undo/redo', () => {
   });
 });
 
+describe('BlockEngine — stacking order', () => {
+  it('bringToFront raises a block above the others without touching history', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    engine.clearHistory();
+
+    expect(a.zIndex).toBe(0);
+    expect(engine.bringToFront(a.id)).toBe(true);
+    expect(a.zIndex).toBeGreaterThan(b.zIndex);
+    expect(engine.canUndo()).toBe(false); // stacking is a view concern
+
+    expect(engine.bringToFront(a.id)).toBe(false); // already on top
+    expect(engine.bringToFront('ghost')).toBe(false);
+
+    engine.bringToFront(b.id);
+    expect(b.zIndex).toBeGreaterThan(a.zIndex);
+  });
+
+  it('emits blockUpdated so renderers can restack', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    engine.createBlock('b');
+    const fn = vi.fn();
+    engine.on('blockUpdated', fn);
+    engine.bringToFront(a.id);
+    expect(fn).toHaveBeenCalledWith(a);
+  });
+
+  it('setBlockZIndex is undoable', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    expect(engine.setBlockZIndex(a.id, 7)).toBe(true);
+    expect(a.zIndex).toBe(7);
+    expect(engine.setBlockZIndex(a.id, 7)).toBe(true); // no-op
+    expect(engine.setBlockZIndex(a.id, Number.NaN)).toBe(false);
+
+    engine.undo();
+    expect(engine.getBlock(a.id).zIndex).toBe(0);
+    engine.redo();
+    expect(engine.getBlock(a.id).zIndex).toBe(7);
+  });
+
+  it('survives an export/import round-trip and tolerates legacy payloads', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    engine.setBlockZIndex(a.id, 4);
+
+    const restored = new BlockEngine();
+    restored.importFromJSON(engine.exportToJSON());
+    expect(restored.getBlock(a.id).zIndex).toBe(4);
+
+    const legacy = new BlockEngine();
+    legacy.importFromJSON(JSON.stringify({ blocks: [{ id: 'old', content: 'x' }] }));
+    expect(legacy.getBlock('old').zIndex).toBe(0);
+  });
+});
+
+describe('BlockEngine — reverse link index', () => {
+  /**
+   * Compare the indexed answer with a brute-force scan, which is what
+   * getIncomingLinks() used to do. Any drift means the index is stale.
+   */
+  function assertIndexMatchesScan(engine) {
+    for (const block of engine.getAllBlocks()) {
+      const scanned = engine
+        .getAllBlocks()
+        .filter((other) => other.hasLink(block.id))
+        .map((other) => other.id)
+        .sort();
+      const indexed = engine
+        .getIncomingLinks(block.id)
+        .map((other) => other.id)
+        .sort();
+      expect(indexed).toEqual(scanned);
+    }
+  }
+
+  it('stays consistent through linking, relinking and unlinking', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+
+    engine.linkBlocks(a.id, b.id, 'single');
+    engine.linkBlocks(c.id, b.id, 'double');
+    assertIndexMatchesScan(engine);
+
+    engine.updateLinkType(a.id, b.id, 'reverse');
+    assertIndexMatchesScan(engine);
+
+    engine.unlinkBlocks(c.id, b.id);
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(b.id)).toHaveLength(0);
+  });
+
+  it('stays consistent through delete and undo/redo', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+    const d = engine.createBlock('d');
+    engine.linkBlocks(a.id, b.id, 'single'); // incoming for b
+    engine.linkBlocks(c.id, b.id, 'single'); // incoming for b
+    engine.linkBlocks(b.id, d.id, 'single'); // outgoing from b
+
+    engine.deleteBlock(b.id);
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(d.id)).toHaveLength(0);
+
+    engine.undo();
+    assertIndexMatchesScan(engine);
+    expect(
+      engine
+        .getIncomingLinks(b.id)
+        .map((x) => x.id)
+        .sort()
+    ).toEqual([a.id, c.id].sort());
+    expect(engine.getIncomingLinks(d.id).map((x) => x.id)).toEqual([b.id]);
+
+    engine.redo();
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(d.id)).toHaveLength(0);
+  });
+
+  it('stays consistent through undo/redo of link operations', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    engine.linkBlocks(a.id, b.id, 'double');
+
+    engine.undo();
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(b.id)).toHaveLength(0);
+
+    engine.redo();
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(b.id).map((x) => x.id)).toEqual([a.id]);
+  });
+
+  it('is rebuilt on import and dropped on clear', () => {
+    const source = new BlockEngine();
+    const a = source.createBlock('a');
+    const b = source.createBlock('b');
+    source.linkBlocks(a.id, b.id, 'single');
+
+    const engine = new BlockEngine();
+    engine.createBlock('stale'); // state that import must replace
+    engine.importFromJSON(source.exportToJSON());
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(b.id).map((x) => x.id)).toEqual([a.id]);
+
+    engine.clear();
+    expect(engine.getIncomingLinks(b.id)).toHaveLength(0);
+
+    engine.undo(); // clear is undoable — the index must come back
+    assertIndexMatchesScan(engine);
+    expect(engine.getIncomingLinks(b.id).map((x) => x.id)).toEqual([a.id]);
+  });
+
+  it('ignores links pruned during import', () => {
+    const engine = new BlockEngine();
+    engine.importFromJSON(
+      JSON.stringify({ blocks: [{ id: 'one', links: [{ id: 'ghost', type: 'single' }] }] })
+    );
+    expect(engine.getIncomingLinks('ghost')).toHaveLength(0);
+    assertIndexMatchesScan(engine);
+  });
+});
+
 describe('BlockEngine — persistence', () => {
   it('roundtrips blocks, links, labels and custom data', () => {
     const engine = new BlockEngine();

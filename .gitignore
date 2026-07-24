@@ -12,6 +12,9 @@ examples/aspnetcore/bin/
 examples/aspnetcore/obj/
 examples/aspnetcore/wwwroot/lib/
 examples/aspnetcore/App_Data/
+examples/aspnetcore.Tests/bin/
+examples/aspnetcore.Tests/obj/
+TestResults/
 
 # Logs
 *.log

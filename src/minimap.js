@@ -28,6 +28,8 @@ export class Minimap {
     this._minY = 0;
     this._rafPending = false;
     this._dragging = false;
+    /** Pool of block nodes, reused across renders. @type {HTMLElement[]} */
+    this._nodes = [];
   }
 
   /**
@@ -81,6 +83,7 @@ export class Minimap {
       this.element = null;
       this.viewportEl = null;
     }
+    this._nodes = [];
   }
 
   /** Center the camera on the world point under the given pointer event. */
@@ -140,24 +143,28 @@ export class Minimap {
     this._minX = minX;
     this._minY = minY;
 
-    for (const el of [...this.element.querySelectorAll('.minimap-block')]) {
-      el.remove();
-    }
-
+    // Reuse the existing nodes: this runs on every camera frame, and
+    // recreating hundreds of divs per frame was the minimap's main cost.
     const doc = this.element.ownerDocument;
-    for (const block of blocks) {
-      const rect = this.renderer.getBlockRect(block);
+    for (let i = this._nodes.length; i < blocks.length; i++) {
       const el = doc.createElement('div');
       el.className = 'minimap-block';
-      if (this.renderer.selectedBlocks.has(block.id)) {
-        el.classList.add('selected');
-      }
+      this.element.appendChild(el);
+      this._nodes.push(el);
+    }
+    for (const surplus of this._nodes.splice(blocks.length)) {
+      surplus.remove();
+    }
+
+    blocks.forEach((block, index) => {
+      const rect = this.renderer.getBlockRect(block);
+      const el = this._nodes[index];
+      el.classList.toggle('selected', this.renderer.selectedBlocks.has(block.id));
       el.style.left = `${(rect.x - minX) * scale}px`;
       el.style.top = `${(rect.y - minY) * scale}px`;
       el.style.width = `${Math.max(2, rect.width * scale)}px`;
       el.style.height = `${Math.max(2, rect.height * scale)}px`;
-      this.element.appendChild(el);
-    }
+    });
 
     const view = this.renderer.getViewRect();
     this.viewportEl.style.left = `${(view.x - minX) * scale}px`;

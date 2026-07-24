@@ -19,6 +19,9 @@ several renderers observe one engine.
 │   ├── Minimap                (navigable overview)          │
 │   └── LinkEditorPopup        (block & edge editors)        │
 └────────────────────────────────────────────────────────────┘
+
+Autosave (optional) subscribes to the engine's events and mirrors
+exportToJSON() into a storage backend.
 ```
 
 ## Modules
@@ -33,7 +36,11 @@ several renderers observe one engine.
 | `src/connectionLayer.js` | SVG edge drawing in world coordinates                                             |
 | `src/minimap.js`         | Overview map + click/drag navigation                                              |
 | `src/linkEditor.js`      | Popup for managing a block's links or a single edge                               |
-| `src/styles.js`          | Injected stylesheet, themeable via CSS custom properties                          |
+| `src/styles.js`          | Injected stylesheet, light/dark presets over CSS custom properties                |
+| `src/autosave.js`        | Debounced persistence of the JSON export into a storage backend                   |
+| `src/snapGuides.js`      | Alignment maths for dragging plus the guide-line overlay                          |
+| `src/contextMenu.js`     | Right-click / long-press menu, keyboard operable                                  |
+| `src/exporter.js`        | Board to standalone SVG, and PNG through a canvas                                 |
 
 ## Key decisions
 
@@ -106,6 +113,49 @@ midpoint. Pair state is canonicalized through `engine.getLinkInfo`, so
 `single`/`reverse` storage differences never leak into rendering. Marker ids
 are per-renderer-instance to allow multiple canvases per page.
 
+## Performance
+
+Three costs dominate large boards, and each is addressed differently:
+
+- **Incoming-link lookups.** `getIncomingLinks()` used to scan every block, and
+  it is called per block while rendering and on every pointer move while
+  dragging — quadratic behaviour on import and drag. The engine now keeps a
+  reverse index (`Map<targetId, Set<sourceId>>`) updated by every link
+  mutation and rebuilt on import, making the lookup proportional to the number
+  of links a block actually has. `deleteBlock` uses it too instead of scanning.
+- **Minimap redraws.** The minimap re-renders on every camera frame; it now
+  reuses a pool of nodes instead of recreating one `div` per block per frame.
+- **Offscreen blocks.** With `cullOffscreen: true` the renderer hides blocks
+  outside the visible world rect (plus `cullMargin`) via `.fbe-offscreen`.
+  Elements stay in `blockElements`, so selection, geometry and host queries are
+  unaffected. Blocks under an active gesture or containing the focused element
+  are never hidden — that would drop the caret mid-edit. During a full
+  `render()` visibility is decided _before_ insertion, otherwise the board
+  would be laid out twice (that mistake cost 3.8× on first render).
+  Culling is off by default and does nothing when the container has no
+  measurable size (hidden or not laid out yet).
+
+### Measurements
+
+`benchmarks/stress.html` (open it through `npm run dev`) generates a board and
+measures first render plus pan/drag frame rates. Figures below are from one
+desktop Chrome run at 100% zoom — treat the _ratios_ as the signal, the
+absolute numbers are machine-specific (an empty board tops out at ~32 fps on
+the same box, so that is the ceiling, not a library limit).
+
+| Board                    | First render | Pan    | Drag   | Blocks in DOM layout |
+| ------------------------ | ------------ | ------ | ------ | -------------------- |
+| 1000 blocks, 998 links   | 143 ms       | 22 fps | 26 fps | 1000                 |
+| …with `cullOffscreen`    | 143 ms       | 21 fps | 31 fps | 36                   |
+| 3000 blocks, ~3000 links | 518 ms       | 10 fps | 8 fps  | 3000                 |
+| …with `cullOffscreen`    | 476 ms       | 17 fps | 21 fps | 36                   |
+
+Reading the numbers: culling is roughly neutral around a thousand blocks and
+clearly pays off beyond that (drag 8 → 21 fps at 3000). Connections are the
+next bottleneck — the SVG layer still draws every edge, and dropping the links
+from a 1000-block board lifts panning from 22 to 30 fps on its own. Culling
+edges as well is the obvious next step.
+
 ## Build & packaging
 
 - `esbuild` bundles `src/index.js` into ESM, CJS and an IIFE browser global
@@ -120,6 +170,11 @@ are per-renderer-instance to allow multiple canvases per page.
 
 - The engine suite covers graph operations, validation, persistence
   round-trips and undo/redo semantics.
-- The renderer suite runs in jsdom with a small `PointerEvent` polyfill
-  (`tests/setup.js`). Because edge geometry is model-based, connection tests
-  work without a layout engine.
+- The renderer suite runs in jsdom with small `PointerEvent` and `confirm`
+  polyfills (`tests/setup.js`). Because edge geometry is model-based,
+  connection tests work without a layout engine.
+- jsdom performs no layout, so `clientWidth`/`clientHeight` are 0. Tests that
+  need a measurable viewport (culling) define those properties on the
+  container.
+- Coverage thresholds in `vitest.config.js` are a ratchet set to the measured
+  floor; raise them when a change lifts the numbers.

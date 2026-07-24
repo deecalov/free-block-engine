@@ -1,6 +1,6 @@
 # TODO
 
-Project assessment as of 2026-07-23 (v2.0.0). Health: 56/56 tests pass, ESLint
+Last reviewed 2026-07-25. Health: 138 JS tests and 14 .NET tests pass, ESLint
 and Prettier clean, all four bundles build (ESM / CJS / global / types), the
 ASP.NET Core example compiles with zero warnings. The items below are ordered
 by priority within each section.
@@ -29,31 +29,32 @@ by priority within each section.
 
 ## Features
 
-- [ ] Light theme preset and `prefers-color-scheme` support — `src/styles.js` currently ships a dark-only palette (themeable via `--fbe-*`, but no ready light set).
-- [ ] Z-order management: bring a block to front on select/drag, persist an explicit `zIndex`.
-- [ ] Snap guides / alignment hints while dragging (edges and centers of neighbouring blocks).
+- [x] ~~Light theme preset~~ **Dark** theme preset and `prefers-color-scheme` support. The original note was wrong: the shipped palette is light, so the missing preset was the dark one. Done: `theme: 'light' | 'dark' | 'auto'` plus ~20 hard-coded colours extracted into `--fbe-*` variables.
+- [x] Z-order management: bring a block to front on select/drag, persist an explicit `zIndex`. Done: `bringToFront()` (outside history) and undoable `setBlockZIndex()`, applied through a `--fbe-z` custom property so `.dragging` still wins.
+- [x] Snap guides / alignment hints while dragging (edges and centers of neighbouring blocks). Done: `snapGuides` option; snapped positions bypass grid rounding.
 - [ ] Edge routing options: straight / orthogonal, plus basic obstacle avoidance.
-- [ ] Context menu (right-click, long-press on touch) for block and canvas actions.
+- [x] Context menu (right-click, long-press on touch) for block and canvas actions. Done: `contextMenu` option with a `contextMenuItems` hook, keyboard navigation and ARIA roles.
 - [ ] Auto-layout algorithms beyond the grid `arrangeBlocks`: tree / layered / force-directed.
-- [ ] Export the board to PNG/SVG.
+- [x] Export the board to PNG/SVG. Done: `exportToSVG()` / `exportToPNG()` on the renderer and as standalone functions.
 - [ ] Block grouping / collapsible containers (long-term).
 
 ## Performance (matters beyond ~500 blocks)
 
-- [ ] Viewport culling: skip rendering blocks far outside the visible camera rect.
-- [ ] Minimap rebuilds every block `div` on each update (`src/minimap.js`) — reuse nodes or draw to a `<canvas>`.
-- [ ] `_buildChips()` calls `getIncomingLinks()` (a full scan) per block, making import O(n²); maintain a reverse-link index in the engine.
-- [ ] Add a benchmark page (1k+ blocks) and document practical limits.
-
-## Accessibility
-
-- [ ] ARIA roles/labels for blocks, action buttons and the link editor popup; focus trap inside the popup; visible focus outlines.
-- [ ] Keyboard-only operation: focus/select blocks, open editors and create links without a mouse.
+- [x] Viewport culling: skip rendering blocks far outside the visible camera rect. Done: opt-in `cullOffscreen`; drag at 3000 blocks goes from 8 to 21 fps.
+- [x] Minimap rebuilds every block `div` on each update (`src/minimap.js`). Done: the nodes are pooled and reused.
+- [x] `_buildChips()` calls `getIncomingLinks()` (a full scan) per block, making import O(n²). Done: the engine keeps a reverse link index.
+- [x] Add a benchmark page (1k+ blocks) and document practical limits. Done: `benchmarks/stress.html`, figures in `docs/architecture.md`.
+- [ ] Cull connections as well — the SVG layer still draws every edge and is now the main cost when panning (1000 blocks: 22 fps with links, 30 without).
 
 ## Quality & CI
 
-- [ ] Test coverage report (`vitest --coverage`) with a threshold in CI and a badge.
-- [ ] CI matrix for Node 18 / 20 / 22 (currently only Node 20).
-- [ ] Integration test for the ASP.NET example (`WebApplicationFactory`: GET/POST `/api/board`, anti-forgery rejection, oversized payload).
-- [ ] Bundle-size guard (e.g. `size-limit`): `free-block-engine.global.min.js` is 58 KB today; fail CI on unexpected growth.
-- [ ] Enable Dependabot (npm + NuGet + Actions) and CodeQL scanning.
+- [x] Test coverage report with a threshold in CI. Done: `npm run test:coverage` with thresholds acting as a ratchet. No badge — that needs an external service such as Codecov.
+- [x] ~~CI matrix for Node 18 / 20 / 22~~ **20 / 22 / 24**: Node 18 is impossible, Vitest 4 requires `^20 || ^22 || >=24` and ESLint 10 requires `^20.19 || ^22.13 || >=24`. Consumers can still run the ES2020 bundles on Node 18.
+- [x] Integration test for the ASP.NET example. Done: `examples/aspnetcore.Tests` (xUnit + `WebApplicationFactory`) covering the empty state, anti-forgery rejection, the save/load round-trip, payload validation and `FileBoardStorage` on a temp directory.
+- [x] Bundle-size guard (`size-limit`) failing CI on unexpected growth. The budget is 90 kB against 84 kB today; raise it deliberately, and consider subpath exports for the optional modules if it approaches that.
+- [x] Enable Dependabot (npm + NuGet + Actions) and CodeQL scanning. Note: CodeQL cannot autobuild the C# project (its csproj fails by design until `dist/` exists), so the workflow builds it manually.
+
+## Accessibility (partially started)
+
+- [ ] ARIA roles/labels for blocks, action buttons and the link editor popup; focus trap inside the popup; visible focus outlines. The context menu already ships with menu roles and arrow-key navigation.
+- [ ] Keyboard-only operation: focus/select blocks, open editors and create links without a mouse.

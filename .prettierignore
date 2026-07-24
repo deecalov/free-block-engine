@@ -2,3 +2,7 @@ dist/
 node_modules/
 coverage/
 package-lock.json
+examples/aspnetcore/wwwroot/lib/
+examples/aspnetcore.Tests/bin/
+examples/aspnetcore.Tests/obj/
+TestResults/

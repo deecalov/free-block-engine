@@ -31,11 +31,22 @@
     "prepublishOnly": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "dev": "node scripts/dev-server.mjs",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "size": "size-limit"
   },
+  "size-limit": [
+    {
+      "name": "browser global (minified, uncompressed)",
+      "path": "dist/free-block-engine.global.min.js",
+      "limit": "90 kB",
+      "gzip": false,
+      "brotli": false
+    }
+  ],
   "keywords": [
     "blocks",
     "canvas",
@@ -58,12 +69,15 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@size-limit/file": "^13.0.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "esbuild": "^0.28.1",
     "eslint": "^10.7.0",
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.7.0",
     "jsdom": "^29.1.1",
     "prettier": "^3.9.6",
+    "size-limit": "^13.0.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   }

@@ -17,6 +17,9 @@ import { ConnectionLayer } from './connectionLayer.js';
 import { Minimap } from './minimap.js';
 import { LinkEditorPopup } from './linkEditor.js';
 import { InteractionController } from './interaction.js';
+import { GuideOverlay } from './snapGuides.js';
+import { ContextMenu } from './contextMenu.js';
+import { exportToSVG, exportToPNG } from './exporter.js';
 
 export class BlockRenderer {
   /**
@@ -36,6 +39,20 @@ export class BlockRenderer {
    *   Custom content renderer (e.g. markdown). Render into `element` and return
    *   true to take ownership — the built-in text editing is disabled for that
    *   block. Any falsy return falls back to plain-text rendering.
+   * @param {boolean} [options.cullOffscreen] Hide blocks outside the visible area
+   *   to keep large boards responsive (false).
+   * @param {number} [options.cullMargin] Extra world-space margin kept visible
+   *   around the viewport when culling (400).
+   * @param {'light'|'dark'|'auto'} [options.theme] Colour scheme; `auto` follows
+   *   `prefers-color-scheme` and reacts to changes ('light').
+   * @param {boolean} [options.snapGuides] Align dragged blocks to the edges and
+   *   centers of their neighbours, showing guide lines (false).
+   * @param {number} [options.snapThreshold] Screen-pixel distance within which
+   *   alignment snapping kicks in (6).
+   * @param {boolean} [options.contextMenu] Show a context menu on right-click and
+   *   touch long-press (false).
+   * @param {(target: import('./contextMenu.js').ContextMenuTarget, defaults: import('./contextMenu.js').ContextMenuItem[]) => import('./contextMenu.js').ContextMenuItem[]} [options.contextMenuItems]
+   *   Replace or amend the menu items.
    */
   constructor(engine, containerOrId, options = {}) {
     this.engine = engine;
@@ -54,6 +71,13 @@ export class BlockRenderer {
       maxZoom: 3,
       keyboardShortcuts: false,
       renderContent: null,
+      cullOffscreen: false,
+      cullMargin: 400,
+      theme: 'light',
+      snapGuides: false,
+      snapThreshold: 6,
+      contextMenu: false,
+      contextMenuItems: null,
       ...options,
     };
 
@@ -63,6 +87,10 @@ export class BlockRenderer {
     this.camera = { x: 0, y: 0, zoom: 1 };
     /** Called after every camera change with a copy of the camera. */
     this.onCameraChange = null;
+    /** Called with 'light'/'dark' when an `auto` theme follows an OS change. */
+    this.onThemeChange = null;
+    this._themeQuery = null;
+    this._themeListener = null;
 
     /** @type {Map<string, HTMLElement>} */
     this.blockElements = new Map();
@@ -70,6 +98,7 @@ export class BlockRenderer {
     this._abort = new AbortController();
     this._engineSubs = [];
     this._destroyed = false;
+    this._cullPending = false;
 
     const doc = this.container.ownerDocument;
     injectStyles(doc);
@@ -87,14 +116,19 @@ export class BlockRenderer {
       this.minimap.mount(this.container, this._abort.signal);
     }
 
+    this.guides = new GuideOverlay(this);
+    this.contextMenu = new ContextMenu(engine, this);
     this.linkEditor = new LinkEditorPopup(engine, this);
     this.interaction = new InteractionController(this);
     this.interaction.attach(this._abort.signal);
 
-    // Close the link editor when clicking outside of it.
+    // Close the popups when clicking outside of them.
     doc.addEventListener(
       'click',
       (e) => {
+        if (this.contextMenu.isOpen && !this.contextMenu.contains(e.target)) {
+          this.contextMenu.close();
+        }
         if (!this.linkEditor.isOpen) return;
         if (this.linkEditor.contains(e.target)) return;
         if (e.target.closest && e.target.closest('.block-action.links')) return;
@@ -104,10 +138,77 @@ export class BlockRenderer {
     );
 
     this._subscribeEngine();
+    this.setTheme(this.options.theme);
     if (this.options.readOnly) {
       this.container.classList.add('read-only');
     }
     this.render();
+  }
+
+  // ----------------------------------------------------------------- theme
+
+  /**
+   * Switch the colour scheme. `auto` follows the OS setting and keeps
+   * following it until the theme changes again or the renderer is destroyed.
+   *
+   * @param {'light'|'dark'|'auto'} theme
+   */
+  setTheme(theme) {
+    const next = theme === 'dark' || theme === 'auto' ? theme : 'light';
+    this.options.theme = next;
+    this._unwatchTheme();
+    this.container.classList.remove('fbe-theme-dark', 'fbe-theme-auto');
+    if (next === 'dark') {
+      this.container.classList.add('fbe-theme-dark');
+    } else if (next === 'auto') {
+      this.container.classList.add('fbe-theme-auto');
+      this._watchTheme();
+    }
+  }
+
+  /**
+   * Resolved scheme actually in effect ('light' or 'dark'), with `auto`
+   * mapped through the current OS preference.
+   * @returns {'light'|'dark'}
+   */
+  getTheme() {
+    if (this.options.theme === 'auto') {
+      return this._darkMediaQuery()?.matches ? 'dark' : 'light';
+    }
+    return this.options.theme === 'dark' ? 'dark' : 'light';
+  }
+
+  /** @returns {MediaQueryList|null} */
+  _darkMediaQuery() {
+    const win = this.container.ownerDocument.defaultView;
+    return typeof win?.matchMedia === 'function'
+      ? win.matchMedia('(prefers-color-scheme: dark)')
+      : null;
+  }
+
+  /**
+   * Notify `onThemeChange` when the OS preference flips. The CSS switches on
+   * its own through the media query; this only exists so hosts can mirror the
+   * scheme in their own chrome.
+   */
+  _watchTheme() {
+    const query = this._darkMediaQuery();
+    if (!query || typeof query.addEventListener !== 'function') return;
+    this._themeQuery = query;
+    this._themeListener = () => {
+      if (typeof this.onThemeChange === 'function') {
+        this.onThemeChange(this.getTheme());
+      }
+    };
+    query.addEventListener('change', this._themeListener);
+  }
+
+  _unwatchTheme() {
+    if (this._themeQuery && this._themeListener) {
+      this._themeQuery.removeEventListener('change', this._themeListener);
+    }
+    this._themeQuery = null;
+    this._themeListener = null;
   }
 
   // -------------------------------------------------------- engine events
@@ -147,6 +248,7 @@ export class BlockRenderer {
     this.viewport.appendChild(el);
     this.blockElements.set(block.id, el);
     this.connections.updateForBlock(block.id);
+    this.cullBlock(block.id);
     this.minimap.update();
   }
 
@@ -176,11 +278,15 @@ export class BlockRenderer {
     }
     const typeEl = el.querySelector('.block-type');
     if (typeEl) typeEl.textContent = block.type;
+    if (this.viewMode === 'free') {
+      el.style.setProperty('--fbe-z', String(block.zIndex));
+    }
     this._refreshChips(block.id);
   }
 
   _onBlockGeometry(block) {
     this.syncBlockGeometry(block.id);
+    this.cullBlock(block.id);
     this.minimap.update();
   }
 
@@ -202,10 +308,17 @@ export class BlockRenderer {
     }
     this.blockElements.clear();
 
+    // Decide visibility before inserting: hiding blocks after they are in the
+    // DOM would lay the whole board out twice.
+    const bounds =
+      this.options.cullOffscreen && this.viewMode === 'free' ? this._cullBounds() : null;
+    const active = bounds ? this.container.ownerDocument.activeElement : null;
+
     for (const block of this.engine.getAllBlocks()) {
       const el = this._createBlockElement(block);
-      this.viewport.appendChild(el);
       this.blockElements.set(block.id, el);
+      if (bounds) this._updateCullState(block.id, el, bounds, active);
+      this.viewport.appendChild(el);
     }
     this._applySelectionClasses();
 
@@ -213,6 +326,7 @@ export class BlockRenderer {
       this._applyCamera();
       this.connections.redrawAll();
     }
+    if (!bounds) this.applyCulling();
     this.minimap.update();
   }
 
@@ -229,6 +343,7 @@ export class BlockRenderer {
       div.style.top = `${block.position.y}px`;
       div.style.width = `${block.size.width}px`;
       div.style.height = `${block.size.height}px`;
+      div.style.setProperty('--fbe-z', String(block.zIndex));
     }
 
     const header = doc.createElement('div');
@@ -453,10 +568,97 @@ export class BlockRenderer {
     const gridSize = this.engine.settings.gridSize * zoom;
     this.container.style.backgroundSize = `${gridSize}px ${gridSize}px`;
     this.container.style.backgroundPosition = `${x}px ${y}px`;
+    this.scheduleCull();
     this.minimap.update();
     if (typeof this.onCameraChange === 'function') {
       this.onCameraChange({ ...this.camera });
     }
+  }
+
+  // --------------------------------------------------------------- culling
+
+  /** Coalesce culling passes into one per animation frame. */
+  scheduleCull() {
+    if (!this.options.cullOffscreen || this._cullPending || this._destroyed) return;
+    this._cullPending = true;
+    const win = this.container.ownerDocument.defaultView;
+    const raf =
+      win && typeof win.requestAnimationFrame === 'function'
+        ? win.requestAnimationFrame.bind(win)
+        : (fn) => setTimeout(fn, 16);
+    raf(() => {
+      this._cullPending = false;
+      this.applyCulling();
+    });
+  }
+
+  /**
+   * Visible world rect expanded by the culling margin, or null when the
+   * container has no measurable size (not laid out yet, or hidden). In that
+   * case nothing may be culled — otherwise the whole board would disappear.
+   *
+   * @returns {{left: number, top: number, right: number, bottom: number}|null}
+   */
+  _cullBounds() {
+    if (this.container.clientWidth <= 0 || this.container.clientHeight <= 0) return null;
+    const margin = this.options.cullMargin;
+    const view = this.getViewRect();
+    return {
+      left: view.x - margin,
+      top: view.y - margin,
+      right: view.x + view.width + margin,
+      bottom: view.y + view.height + margin,
+    };
+  }
+
+  /**
+   * Toggle `.fbe-offscreen` for one block.
+   *
+   * A block is never hidden while it is under an active gesture or while it
+   * contains the focused element — that would drop the caret mid-edit.
+   */
+  _updateCullState(id, el, bounds, active) {
+    const block = this.engine.getBlock(id);
+    if (!block) return;
+    const rect = this.getBlockRect(block);
+    const inView =
+      rect.x < bounds.right &&
+      rect.x + rect.width > bounds.left &&
+      rect.y < bounds.bottom &&
+      rect.y + rect.height > bounds.top;
+    const pinned = this._gestureOverrides.has(id) || (active !== null && el.contains(active));
+    el.classList.toggle('fbe-offscreen', !inView && !pinned);
+  }
+
+  /**
+   * Hide blocks that lie outside the visible world rect (plus a margin).
+   * Elements stay in `blockElements`, so selection, geometry and host queries
+   * are unaffected.
+   */
+  applyCulling() {
+    if (this._destroyed) return;
+    const bounds =
+      this.options.cullOffscreen && this.viewMode === 'free' ? this._cullBounds() : null;
+    if (!bounds) {
+      for (const el of this.blockElements.values()) {
+        el.classList.remove('fbe-offscreen');
+      }
+      return;
+    }
+    const active = this.container.ownerDocument.activeElement;
+    for (const [id, el] of this.blockElements) {
+      this._updateCullState(id, el, bounds, active);
+    }
+  }
+
+  /** Re-evaluate culling for a single block (cheaper than a full pass). */
+  cullBlock(id) {
+    if (this._destroyed || !this.options.cullOffscreen || this.viewMode !== 'free') return;
+    const el = this.blockElements.get(id);
+    if (!el) return;
+    const bounds = this._cullBounds();
+    if (!bounds) return;
+    this._updateCullState(id, el, bounds, this.container.ownerDocument.activeElement);
   }
 
   /**
@@ -593,6 +795,9 @@ export class BlockRenderer {
       this.selectedBlocks.clear();
       this.selectedBlocks.add(id);
     }
+    if (this.selectedBlocks.has(id)) {
+      this.engine.bringToFront(id);
+    }
     this._applySelectionClasses();
     this.minimap.update();
   }
@@ -726,6 +931,50 @@ export class BlockRenderer {
     this.linkEditor.openForEdge(fromId, toId, pointer);
   }
 
+  /**
+   * Open the context menu for whatever sits under the pointer.
+   * @param {{clientX: number, clientY: number, target?: EventTarget}} pointer
+   */
+  openContextMenu(pointer) {
+    if (!this.options.contextMenu) return;
+    const node = pointer.target;
+    const blockEl = node && node.closest ? node.closest('.block') : null;
+    this.contextMenu.open(
+      {
+        type: blockEl ? 'block' : 'canvas',
+        blockId: blockEl ? blockEl.dataset.blockId : null,
+        world: this.screenToWorld(pointer.clientX, pointer.clientY),
+      },
+      pointer
+    );
+  }
+
+  // ---------------------------------------------------------------- export
+
+  /**
+   * Serialize the board to standalone SVG markup, using the current theme
+   * unless overridden.
+   *
+   * @param {object} [options] See the `exportToSVG` helper.
+   * @returns {string}
+   */
+  exportToSVG(options = {}) {
+    return exportToSVG(this.engine, { theme: this.getTheme(), ...options });
+  }
+
+  /**
+   * Rasterize the board to a PNG blob (browser only).
+   * @param {object} [options] See the `exportToPNG` helper.
+   * @returns {Promise<Blob>}
+   */
+  exportToPNG(options = {}) {
+    return exportToPNG(this.engine, {
+      theme: this.getTheme(),
+      document: this.container.ownerDocument,
+      ...options,
+    });
+  }
+
   // ----------------------------------------------------------------- modes
 
   /** @param {'free'|'grid'} mode */
@@ -735,6 +984,15 @@ export class BlockRenderer {
     this.linkEditor.close();
     this.interaction.cancelGesture();
     this.render();
+  }
+
+  /**
+   * Enable or disable offscreen culling at runtime.
+   * @param {boolean} enabled
+   */
+  setCullOffscreen(enabled) {
+    this.options.cullOffscreen = !!enabled;
+    this.applyCulling();
   }
 
   /** Toggle read-only mode. @param {boolean} readOnly */
@@ -773,6 +1031,9 @@ export class BlockRenderer {
     }
     this._engineSubs = [];
     this._abort.abort();
+    this._unwatchTheme();
+    this.guides.hide();
+    this.contextMenu.close();
     this.linkEditor.close();
     this.minimap.destroy();
     this.connections.destroy();
@@ -786,7 +1047,9 @@ export class BlockRenderer {
       'grid-mode',
       'read-only',
       'linking',
-      'panning'
+      'panning',
+      'fbe-theme-dark',
+      'fbe-theme-auto'
     );
     this.container.style.backgroundSize = '';
     this.container.style.backgroundPosition = '';
