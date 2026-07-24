@@ -8,6 +8,8 @@ import {
   BlockRenderer, // rendering layer
   Block, // block model class
   History, // undo/redo stack (used internally, exported for extension)
+  Autosave, // debounced storage persistence helper
+  createAutosave, // factory for Autosave
   LINK_TYPES, // ['single', 'reverse', 'double']
   DEFAULT_BLOCK_SIZE, // { width: 250, height: 150 }
   connectionPoint, // pure geometry helper used by the connection layer
@@ -98,6 +100,10 @@ of link operations), `blocksImported({count})`, `engineCleared()`,
 `blocksArranged({count})`, `historyChanged({canUndo, canRedo})`,
 `settingsUpdated(settings)`.
 
+Event names and payloads are typed: the generated declarations expose
+`EngineEventMap`, and `on`/`off`/`emit` are generic over its keys, so
+TypeScript infers the payload type from the event name.
+
 ---
 
 ## Block
@@ -126,10 +132,39 @@ Prefer mutating blocks through engine methods — direct setters
 | `defaultLinkType`     | `'single'`  | Used by linking mode and `linkSelected()` |
 | `readOnly`            | `false`     | Disable all editing interactions          |
 | `showMinimap`         | `true`      | Mount the minimap                         |
-| `confirmDelete`       | `true`      | `window.confirm` before `deleteBlock()`   |
+| `confirmDelete`       | `true`      | `window.confirm` before deleting          |
 | `minZoom` / `maxZoom` | `0.2` / `3` | Camera zoom bounds                        |
+| `keyboardShortcuts`   | `false`     | Built-in hotkeys (see below)              |
+| `renderContent`       | `null`      | Custom content renderer hook (see below)  |
 
 The container must have a height (the stylesheet sizes it `100%`).
+
+### Keyboard shortcuts
+
+With `keyboardShortcuts: true` the renderer listens on its window:
+
+| Keys                  | Action                                                |
+| --------------------- | ----------------------------------------------------- |
+| Ctrl/Cmd+Z            | Undo                                                  |
+| Ctrl+Y, Ctrl+Shift+Z  | Redo                                                  |
+| Ctrl+A                | Select all (also in read-only mode)                   |
+| Ctrl+D                | Duplicate the selection                               |
+| Delete / Backspace    | Delete the selection (honours `confirmDelete`)        |
+| Arrows / Shift+Arrows | Nudge the selection by `gridSize` / by 1 px (no snap) |
+
+Shortcuts are ignored while an input, textarea, select or contenteditable
+element has focus; mutating shortcuts are disabled in read-only mode. Enable
+the option on one renderer per page — every enabled instance reacts to the
+same window events.
+
+### Custom content rendering
+
+`renderContent(block, element, { readOnly })` is called for the
+`.block-content` element on creation and on every content update (the same
+element is reused — clear or patch it yourself). Return `true` to take
+ownership: the built-in plain-text rendering and inline editing are skipped
+for that block. Any falsy return (or a thrown error, which is logged) falls
+back to the default behavior. Sanitize any HTML you inject.
 
 ### Camera
 
@@ -186,3 +221,29 @@ The injected stylesheet reads CSS custom properties from
 `--fbe-grid-line`, `--fbe-block-bg`, `--fbe-block-border`,
 `--fbe-block-selected-bg`, `--fbe-text-muted`, `--fbe-edge-single`,
 `--fbe-edge-double`.
+
+---
+
+## Autosave
+
+`createAutosave(engine, options?)` (or `new Autosave(engine, options?)`)
+persists the engine export into a Web Storage-compatible backend with
+debounced writes. Saving is triggered by `historyChanged` — fired by every
+mutating operation, undo/redo, import and clear — and by `settingsUpdated`.
+Without a storage backend (e.g. during SSR) the helper stays inert.
+
+| Option       | Default                   | Meaning                                      |
+| ------------ | ------------------------- | -------------------------------------------- |
+| `key`        | `'free-block-engine'`     | Storage key                                  |
+| `debounceMs` | `500`                     | Delay after the last change before writing   |
+| `storage`    | `globalThis.localStorage` | Any `getItem`/`setItem`/`removeItem` backend |
+
+| Method      | Returns   | Notes                                               |
+| ----------- | --------- | --------------------------------------------------- |
+| `load()`    | `boolean` | Imports the saved board; `false` when nothing saved |
+| `flush()`   | `void`    | Write immediately, cancelling the pending debounce  |
+| `clear()`   | `void`    | Remove the saved entry                              |
+| `destroy()` | `void`    | Unsubscribe from the engine and stop saving         |
+
+Storage errors (quota, privacy mode) are caught and logged — they never
+break the engine operation that triggered the save.

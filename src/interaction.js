@@ -4,7 +4,9 @@
  * One delegated set of Pointer Events listeners on the renderer container
  * handles every gesture: block drag (with click/drag threshold), resize,
  * lasso selection, canvas pan (space/middle button/touch), pinch zoom,
- * Ctrl+wheel zoom and the "create link" mode. No per-block document
+ * Ctrl+wheel zoom and the "create link" mode. Optional built-in keyboard
+ * shortcuts (options.keyboardShortcuts) cover undo/redo, select all,
+ * duplicate, delete and arrow-key nudging. No per-block document
  * listeners — nothing leaks between renders, and destroy() detaches
  * everything via one AbortSignal.
  *
@@ -211,22 +213,101 @@ export class InteractionController {
   // ------------------------------------------------------------- keyboard
 
   onKeyDown(e) {
+    const editable = this._isEditableTarget(e.target);
     if (e.code === 'Space') {
-      const t = e.target;
-      const editable =
-        t &&
-        (t.isContentEditable ||
-          t.tagName === 'INPUT' ||
-          t.tagName === 'TEXTAREA' ||
-          t.tagName === 'SELECT');
       if (!editable) {
         this.spaceDown = true;
         this.renderer.container.classList.add('panning');
-        if (t === t.ownerDocument.body) e.preventDefault();
+        if (e.target === e.target.ownerDocument?.body) e.preventDefault();
       }
-    } else if (e.key === 'Escape') {
-      this.cancelAll();
+      return;
     }
+    if (e.key === 'Escape') {
+      this.cancelAll();
+      return;
+    }
+    if (this.renderer.options.keyboardShortcuts && !editable) {
+      this._handleShortcut(e);
+    }
+  }
+
+  /** @param {EventTarget|null} t @returns {boolean} */
+  _isEditableTarget(t) {
+    return Boolean(
+      t &&
+      (t.isContentEditable ||
+        t.tagName === 'INPUT' ||
+        t.tagName === 'TEXTAREA' ||
+        t.tagName === 'SELECT')
+    );
+  }
+
+  /**
+   * Built-in hotkeys (options.keyboardShortcuts): Ctrl/Cmd+Z — undo,
+   * Ctrl+Y / Ctrl+Shift+Z — redo, Ctrl+A — select all, Ctrl+D — duplicate,
+   * Delete/Backspace — delete the selection, arrow keys — nudge the
+   * selection by gridSize (Shift: by 1px without snapping).
+   *
+   * @param {KeyboardEvent} e
+   */
+  _handleShortcut(e) {
+    const r = this.renderer;
+    const ctrl = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (ctrl && key === 'a') {
+      e.preventDefault();
+      r.selectAll();
+      return;
+    }
+    if (r.options.readOnly) return;
+    if (ctrl && key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      r.engine.undo();
+    } else if (ctrl && (key === 'y' || (key === 'z' && e.shiftKey))) {
+      e.preventDefault();
+      r.engine.redo();
+    } else if (ctrl && key === 'd') {
+      e.preventDefault();
+      r.duplicateSelected();
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && !ctrl) {
+      this._deleteSelection(e);
+    } else if (e.key.startsWith('Arrow') && !ctrl) {
+      this._nudgeSelection(e);
+    }
+  }
+
+  /** Delete the selected blocks, honouring options.confirmDelete. */
+  _deleteSelection(e) {
+    const r = this.renderer;
+    const count = r.selectedBlocks.size;
+    if (count === 0) return;
+    e.preventDefault();
+    if (r.options.confirmDelete) {
+      const win = r.container.ownerDocument.defaultView;
+      const question = count === 1 ? 'Delete this block?' : `Delete ${count} blocks?`;
+      if (win && typeof win.confirm === 'function' && !win.confirm(question)) return;
+    }
+    r.deleteSelected();
+  }
+
+  /** Move the selection with arrow keys (Shift: 1px, no grid snap). */
+  _nudgeSelection(e) {
+    const r = this.renderer;
+    if (r.selectedBlocks.size === 0 || r.viewMode !== 'free') return;
+    const step = e.shiftKey ? 1 : r.engine.settings.gridSize;
+    const dx = e.key === 'ArrowRight' ? step : e.key === 'ArrowLeft' ? -step : 0;
+    const dy = e.key === 'ArrowDown' ? step : e.key === 'ArrowUp' ? -step : 0;
+    if (dx === 0 && dy === 0) return;
+    e.preventDefault();
+    const ids = [...r.selectedBlocks];
+    if (ids.length > 1) r.engine.beginBatch('nudgeBlocks');
+    for (const id of ids) {
+      const block = r.engine.getBlock(id);
+      if (block) {
+        r.engine.setBlockPosition(id, block.position.x + dx, block.position.y + dy, !e.shiftKey);
+      }
+    }
+    if (ids.length > 1) r.engine.endBatch();
   }
 
   onKeyUp(e) {

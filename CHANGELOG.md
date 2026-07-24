@@ -5,6 +5,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Typed engine events: the generated TypeScript declarations expose
+  `EngineEventMap`, and `on`/`off`/`emit` are generic over its keys, so the
+  payload type is inferred from the event name.
+- Optional built-in keyboard shortcuts (`keyboardShortcuts` renderer
+  option): Ctrl/Cmd+Z undo, Ctrl+Y / Ctrl+Shift+Z redo, Ctrl+A select all,
+  Ctrl+D duplicate, Delete/Backspace delete the selection (honours
+  `confirmDelete`), arrow keys nudge the selection by a grid step
+  (Shift: 1 px without snapping). The demo now uses them instead of its
+  own document-level bindings.
+- `renderContent(block, element, { readOnly })` renderer option — custom
+  block content rendering (markdown, HTML, widgets). Return `true` to take
+  ownership; falsy returns and thrown errors fall back to plain text.
+- `Autosave` / `createAutosave(engine, options)` export — debounced
+  persistence into localStorage or any compatible storage backend, with
+  `load()`, `flush()`, `clear()` and `destroy()`.
+- Documented `arrangeBlocks()` in the README API section.
+
 ### Fixed
 
 - `duplicateBlock()` recorded history before copying the custom `data`

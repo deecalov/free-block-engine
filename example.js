@@ -6,6 +6,7 @@ const { BlockEngine, BlockRenderer } = FreeBlockEngine;
 const engine = new BlockEngine();
 const renderer = new BlockRenderer(engine, 'blocks-container', {
   defaultLinkType: document.getElementById('linkTypeSelect').value,
+  keyboardShortcuts: true, // Ctrl+Z/Y, Ctrl+A, Ctrl+D, Delete, arrow nudge
 });
 
 // ------------------------------------------------------------------ status
@@ -152,43 +153,15 @@ function handleImport(event) {
 
 // ---------------------------------------------------------------- keyboard
 
+// Undo/redo, duplicate, delete, select-all and arrow nudging come from the
+// renderer's built-in `keyboardShortcuts` option; only the app-specific
+// "link selected" hotkey lives in the demo.
 document.addEventListener('keydown', (e) => {
   const inEditor =
     e.target.isContentEditable || e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA';
-
-  if ((e.ctrlKey || e.metaKey) && !inEditor) {
-    const key = e.key.toLowerCase();
-    if (key === 'z' && !e.shiftKey) {
-      e.preventDefault();
-      undo();
-      return;
-    }
-    if (key === 'y' || (key === 'z' && e.shiftKey)) {
-      e.preventDefault();
-      redo();
-      return;
-    }
-    if (key === 'd') {
-      e.preventDefault();
-      const copies = renderer.duplicateSelected();
-      if (copies.length > 0) {
-        updateStatus(`Duplicated ${copies.length} block(s)`);
-      }
-      return;
-    }
-    if (key === 'l') {
-      e.preventDefault();
-      linkSelectedBlocks();
-      return;
-    }
-  }
-
-  if (e.key === 'Delete' && !inEditor) {
-    const selected = renderer.getSelectedBlocks();
-    if (selected.length > 0 && confirm(`Delete ${selected.length} block(s)?`)) {
-      const count = renderer.deleteSelected();
-      updateStatus(`Deleted ${count} block(s)`);
-    }
+  if ((e.ctrlKey || e.metaKey) && !inEditor && e.key.toLowerCase() === 'l') {
+    e.preventDefault();
+    linkSelectedBlocks();
   }
 });
 
