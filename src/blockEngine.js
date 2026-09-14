@@ -566,6 +566,55 @@ export class BlockEngine {
     return true;
   }
 
+  /**
+   * Put a block below all others (undoable, one step). Indices stay
+   * non-negative — a negative order would paint the block under the edge
+   * layer — so when the lowest block already sits at 0 the others are lifted
+   * instead.
+   *
+   * @param {string} id
+   * @returns {boolean} false when the block is unknown or already lowest.
+   */
+  sendToBack(id) {
+    const block = this.blocks.get(id);
+    if (!block) return false;
+    const others = [];
+    let min = Infinity;
+    for (const other of this.blocks.values()) {
+      if (other.id === id) continue;
+      others.push(other);
+      if (other.zIndex < min) min = other.zIndex;
+    }
+    if (others.length === 0 || block.zIndex < min) return false;
+    this.beginBatch('sendToBack');
+    if (min > 0) {
+      this.setBlockZIndex(id, min - 1);
+    } else {
+      others.sort((a, b) => a.zIndex - b.zIndex);
+      others.forEach((other, index) => this.setBlockZIndex(other.id, index + 1));
+      this.setBlockZIndex(id, 0);
+    }
+    this.endBatch();
+    return true;
+  }
+
+  /**
+   * Compact the stacking indices to 0..n-1 in their current order (undoable,
+   * one step). bringToFront() raises the top index by one per call, so a
+   * long session drifts into large numbers; compact before export or when
+   * the numbers matter to the host.
+   *
+   * @returns {boolean} false when the order was already compact.
+   */
+  normalizeZOrder() {
+    const blocks = this.getAllBlocks().sort((a, b) => a.zIndex - b.zIndex);
+    if (blocks.every((block, index) => block.zIndex === index)) return false;
+    this.beginBatch('normalizeZOrder');
+    blocks.forEach((block, index) => this.setBlockZIndex(block.id, index));
+    this.endBatch();
+    return true;
+  }
+
   // ----------------------------------------------------------------- links
 
   /**
@@ -869,6 +918,98 @@ export class BlockEngine {
       () => this._loadSnapshot(after)
     );
     return true;
+  }
+
+  /**
+   * Serializable fragment of a subset of blocks: the blocks themselves and
+   * only the links among them. Feed it to importBlocks() — on this or another
+   * engine — or put it on the clipboard. Unknown ids are skipped.
+   *
+   * @param {string[]} ids
+   * @returns {{version: number, blocks: object[]}}
+   */
+  exportBlocks(ids) {
+    const wanted = new Set(ids);
+    const blocks = [];
+    for (const id of ids) {
+      const block = this.blocks.get(id);
+      if (!block) continue;
+      const json = block.toJSON();
+      json.links = json.links.filter((link) => wanted.has(link.id));
+      blocks.push(json);
+    }
+    return { version: 2, blocks };
+  }
+
+  /**
+   * Add the blocks of a fragment (from exportBlocks(), or a full export) as
+   * new blocks with fresh ids, reproducing the links among them and copying
+   * their data. Positions are shifted by `offset`; the copies are stacked
+   * above everything else in their original order. One undo step.
+   *
+   * @param {object|string} fragment Parsed fragment or its JSON text.
+   * @param {{offset?: {x: number, y: number}}} [options]
+   * @returns {Block[]} The created blocks in fragment order (empty on bad input).
+   */
+  importBlocks(fragment, options = {}) {
+    if (typeof fragment === 'string') {
+      try {
+        fragment = JSON.parse(fragment);
+      } catch {
+        return [];
+      }
+    }
+    if (!fragment || !Array.isArray(fragment.blocks)) return [];
+    const offset = options.offset ?? { x: 0, y: 0 };
+
+    let top = -1;
+    for (const block of this.blocks.values()) {
+      if (block.zIndex > top) top = block.zIndex;
+    }
+
+    /** @type {Array<{block: Block, source: Block}>} */
+    const created = [];
+    const idMap = new Map();
+    this.beginBatch('importBlocks');
+    for (const raw of fragment.blocks) {
+      if (!raw || raw.id == null) continue;
+      const source = Block.fromJSON(raw);
+      const block = this.createBlock(
+        source.content,
+        source.type,
+        { x: source.position.x + offset.x, y: source.position.y + offset.y },
+        { ...source.size }
+      );
+      if (Object.keys(source.data).length > 0) {
+        this.setBlockData(block.id, JSON.parse(JSON.stringify(source.data)));
+      }
+      idMap.set(String(raw.id), block.id);
+      created.push({ block, source });
+    }
+
+    [...created]
+      .sort((a, b) => a.source.zIndex - b.source.zIndex)
+      .forEach(({ block }, index) => this.setBlockZIndex(block.id, top + 1 + index));
+
+    // Links among the fragment, once per pair so double links are not redone.
+    const seen = new Set();
+    for (const { block, source } of created) {
+      for (const [targetId, meta] of source.links) {
+        const newTarget = idMap.get(targetId);
+        if (!newTarget) continue;
+        const key = block.id < newTarget ? `${block.id}|${newTarget}` : `${newTarget}|${block.id}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        this.linkBlocks(
+          block.id,
+          newTarget,
+          meta.type === 'double' ? 'double' : 'single',
+          meta.label
+        );
+      }
+    }
+    this.endBatch();
+    return created.map(({ block }) => block);
   }
 
   /**

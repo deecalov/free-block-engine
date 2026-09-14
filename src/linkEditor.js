@@ -84,13 +84,15 @@ export class LinkEditorPopup {
     this.element.innerHTML = '';
 
     const doc = this.element.ownerDocument;
+    const t = (key, vars) => this.renderer.t(key, vars);
     const title = doc.createElement('h3');
-    title.textContent = this._mode.kind === 'block' ? 'Manage Links' : 'Edit Connection';
+    title.textContent = this._mode.kind === 'block' ? t('linkEditorTitle') : t('edgeEditorTitle');
     this.element.appendChild(title);
 
     const closeBtn = doc.createElement('button');
     closeBtn.className = 'link-editor-close';
     closeBtn.textContent = '\u00d7';
+    closeBtn.title = t('close');
     closeBtn.onclick = () => this.close();
     this.element.appendChild(closeBtn);
 
@@ -129,7 +131,7 @@ export class LinkEditorPopup {
       addSection.className = 'link-editor-add';
       const addButton = doc.createElement('button');
       addButton.className = 'link-editor-add-button';
-      addButton.textContent = '+ Add New Link';
+      addButton.textContent = this.renderer.t('addLink');
       addButton.onclick = () => {
         const sourceId = this._mode.blockId;
         this.close();
@@ -164,6 +166,7 @@ export class LinkEditorPopup {
   _createItem(anchorId, otherId, direction) {
     const doc = this.element.ownerDocument;
     const engine = this.engine;
+    const t = (key, vars) => this.renderer.t(key, vars);
     const other = engine.getBlock(otherId);
     const info = engine.getLinkInfo(anchorId, otherId);
 
@@ -181,7 +184,7 @@ export class LinkEditorPopup {
 
     const content = doc.createElement('div');
     content.className = 'link-editor-item-content';
-    content.textContent = (other && other.content) || '(empty)';
+    content.textContent = (other && other.content) || t('emptyContent');
     item.appendChild(content);
 
     const actions = doc.createElement('div');
@@ -203,14 +206,14 @@ export class LinkEditorPopup {
       actions.appendChild(btn);
     };
 
-    addTypeButton('\u2192', 'single', 'Direction: anchor to target');
-    addTypeButton('\u2190', 'reverse', 'Direction: target to anchor');
-    addTypeButton('\u2194', 'double', 'Bidirectional');
+    addTypeButton('\u2192', 'single', t('directionForward'));
+    addTypeButton('\u2190', 'reverse', t('directionBackward'));
+    addTypeButton('\u2194', 'double', t('directionBoth'));
 
     const deleteBtn = doc.createElement('button');
     deleteBtn.className = 'delete';
     deleteBtn.textContent = '\u2715';
-    deleteBtn.title = 'Delete link';
+    deleteBtn.title = t('deleteLink');
     deleteBtn.disabled = readOnly;
     deleteBtn.onclick = () => {
       engine.unlinkBlocks(anchorId, otherId);
@@ -226,7 +229,7 @@ export class LinkEditorPopup {
     const label = doc.createElement('input');
     label.className = 'link-editor-label';
     label.type = 'text';
-    label.placeholder = 'Label (optional)';
+    label.placeholder = t('labelPlaceholder');
     label.value = (info && info.label) || '';
     label.disabled = readOnly;
     label.addEventListener('change', () => {

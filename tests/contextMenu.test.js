@@ -58,6 +58,21 @@ describe('ContextMenu', () => {
     expect(container.querySelector('.fbe-context-menu')).toBeNull(); // closes on activation
   });
 
+  it('offers stacking commands for a block', () => {
+    const a = engine.createBlock('a', 'default', { x: 0, y: 0 });
+    const b = engine.createBlock('b', 'default', { x: 300, y: 0 });
+    engine.bringToFront(a.id);
+    rightClick(renderer.getBlockElement(a.id));
+    expect(labels()).toContain('Bring to front');
+
+    const sendToBack = [...container.querySelectorAll('.fbe-context-item')].find(
+      (el) => el.textContent === 'Send to back'
+    );
+    sendToBack.click();
+    expect(a.zIndex).toBeLessThan(b.zIndex);
+    expect(renderer.getBlockElement(a.id).style.getPropertyValue('--fbe-z')).toBe(String(a.zIndex));
+  });
+
   it('creates a block at the clicked world position', () => {
     renderer.setCamera({ x: 0, y: 0, zoom: 1 });
     rightClick(container, { clientX: 240, clientY: 160 });

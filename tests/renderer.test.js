@@ -138,6 +138,41 @@ describe('BlockRenderer', () => {
     expect(engine.getBlock(a.id).content).toBe('new text');
   });
 
+  it('keeps line breaks that the browser stored as markup while editing', () => {
+    const a = engine.createBlock('old', 'default', { x: 100, y: 100 });
+    const contentEl = renderer.getBlockElement(a.id).querySelector('.block-content');
+    // Chrome wraps every Enter in a <div>, Firefox inserts <br>; textContent drops both.
+    contentEl.innerHTML = 'first<div>second</div><div><br></div><div>fourth</div>';
+    contentEl.dispatchEvent(new window.Event('blur'));
+    expect(engine.getBlock(a.id).content).toBe('first\nsecond\n\nfourth');
+  });
+
+  it('restores a deleted block incrementally on undo, with its edges and chips', () => {
+    const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    const b = engine.createBlock('b', 'default', { x: 600, y: 100 });
+    const c = engine.createBlock('c', 'default', { x: 100, y: 600 });
+    engine.linkBlocks(a.id, b.id, 'single', 'ab');
+    engine.linkBlocks(c.id, a.id);
+    const elB = renderer.getBlockElement(b.id);
+    const elC = renderer.getBlockElement(c.id);
+
+    engine.deleteBlock(a.id);
+    expect(container.querySelectorAll('.fbe-edge')).toHaveLength(0);
+    expect(elB.querySelector('.block-links')).toBeNull();
+
+    engine.undo();
+    // Other blocks keep their elements — no full re-render.
+    expect(renderer.getBlockElement(b.id)).toBe(elB);
+    expect(renderer.getBlockElement(c.id)).toBe(elC);
+    expect(renderer.getBlockElement(a.id)).toBeTruthy();
+    expect(container.querySelectorAll('.block')).toHaveLength(3);
+    expect(container.querySelectorAll('.fbe-edge')).toHaveLength(2);
+    expect(container.querySelector('.edge-label').textContent).toBe('ab');
+    // Neighbours show the restored connection again.
+    expect(elB.querySelectorAll('.block-link')).toHaveLength(1);
+    expect(elC.querySelectorAll('.block-link')).toHaveLength(1);
+  });
+
   it('draws edges with arrow markers and labels', () => {
     const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
     const b = engine.createBlock('b', 'default', { x: 600, y: 100 });
@@ -207,6 +242,7 @@ describe('BlockRenderer', () => {
 
   it('read-only mode disables editing affordances', () => {
     const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    renderer.selectBlock(a.id); // handles exist only for hovered/selected blocks
     renderer.setReadOnly(true);
     const el = renderer.getBlockElement(a.id);
     expect(el.querySelector('.resize-handle')).toBeNull();
@@ -227,6 +263,24 @@ describe('BlockRenderer', () => {
     expect(renderer.selectedBlocks.has(copies[0].id)).toBe(true);
     engine.undo(); // one undo step removes the duplicate
     expect(engine.getAllBlocks()).toHaveLength(1);
+  });
+
+  it('duplicateSelected reproduces the links between the selected blocks', () => {
+    const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    const b = engine.createBlock('b', 'default', { x: 500, y: 100 });
+    const c = engine.createBlock('c', 'default', { x: 900, y: 100 });
+    engine.linkBlocks(a.id, b.id, 'double', 'ab');
+    engine.linkBlocks(b.id, c.id, 'single'); // c is not selected: not copied
+    renderer.selectBlock(a.id);
+    renderer.selectBlock(b.id, true);
+
+    const [a2, b2] = renderer.duplicateSelected();
+    expect(engine.getLinkInfo(a2.id, b2.id)).toMatchObject({ type: 'double', label: 'ab' });
+    expect(engine.getLinkInfo(b2.id, c.id)).toBeNull();
+    expect(a2.position).toEqual({ x: 140, y: 140 }); // offset by two grid steps
+    expect(container.querySelectorAll('.fbe-edge')).toHaveLength(3);
+    engine.undo();
+    expect(engine.getAllBlocks()).toHaveLength(3);
   });
 
   it('linkSelected chains blocks and returns false for fewer than two', () => {
@@ -288,7 +342,8 @@ describe('BlockRenderer', () => {
   });
 
   it('grid mode hides free-positioning affordances', () => {
-    engine.createBlock('a', 'default', { x: 100, y: 100 });
+    const a = engine.createBlock('a', 'default', { x: 100, y: 100 });
+    renderer.selectBlock(a.id); // handles exist only for hovered/selected blocks
     renderer.setViewMode('grid');
     expect(container.classList.contains('grid-mode')).toBe(true);
     expect(container.querySelector('.resize-handle')).toBeNull();

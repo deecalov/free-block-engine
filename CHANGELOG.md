@@ -7,6 +7,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Clipboard**: with `keyboardShortcuts`, Ctrl+C / Ctrl+X / Ctrl+V copy, cut
+  and paste blocks through the system clipboard as an `exportBlocks()`
+  fragment, links among the copied blocks included; plain text pastes as a
+  new block. Also available as `copySelection()` / `paste(text)`.
+- **Fragments**: `engine.exportBlocks(ids)` and the undoable
+  `engine.importBlocks(fragment, { offset })` — the subset of a board with the
+  links among it, importable with fresh ids into the same or another engine.
+  `duplicateSelected()` is built on them and now keeps the links between the
+  duplicated blocks.
+- **Double-click** on empty canvas creates a block, selects it and focuses
+  its editor (`createBlockAt()`, also used by the context menu). Shift+click
+  extends the selection like Ctrl+click.
+- **Resize from every side**: eight handles; left/top handles keep the
+  opposite edge in place and commit move + resize as one undo step.
+- **Stacking**: `engine.sendToBack(id)` (undoable, indices stay ≥ 0), a
+  "Send to back" context menu entry, and `engine.normalizeZOrder()` to compact
+  the indices that `bringToFront()` keeps growing.
+- **Localization**: a `strings` renderer option overrides any of
+  `DEFAULT_STRINGS` (tooltips, link editor, context menu, confirmations);
+  `formatString()` fills `{count}` / `{date}` placeholders.
+- **Block chrome options** `showBlockId`, `showBlockMeta`, `showLinkChips`
+  for a plain sticky-note look.
+- **Edge culling**: with `cullOffscreen`, edges outside the view are hidden
+  too, by bounding box, so an edge into a culled block stays visible.
 - **Dark theme** and a `theme` renderer option (`'light' | 'dark' | 'auto'`).
   `'auto'` follows `prefers-color-scheme` and reports flips through
   `onThemeChange`. Every colour that was previously hard-coded now comes from
@@ -41,6 +65,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- The connection layer indexes edges by pair and by block and relayouts them
+  in place; dragging no longer queries and rebuilds every edge on each
+  pointer move.
+- Undoing a delete restores the block incrementally instead of re-rendering
+  the whole board.
+- Block action buttons (🔗, ×) also show on the selected block, so touch
+  devices without hover can reach them.
+- The edge hit area is 14 screen pixels at any zoom (its stroke width is
+  divided by the zoom through a `--fbe-zoom` custom property) instead of
+  shrinking with the board.
+- Resize handles are created only when a block is hovered or selected,
+  instead of eight elements per block up front, which keeps first render and
+  painting of large boards cheap.
+- The hover / dragging / resizing / guide layers sit at z-index 1 000 000+,
+  so a long session of `bringToFront()` can no longer stack a block above
+  the one being dragged.
+- Bundle-size budget raised from 90 to 100 kB for the features above; the
+  minified global build is ~96 kB, ~6 kB of which are the repeated
+  per-module license headers.
 - `getIncomingLinks()` is served from a reverse link index instead of scanning
   every block, removing the quadratic cost from rendering and dragging.
   Results are now ordered by link creation rather than block order.
@@ -49,6 +92,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Editing a block across several lines lost the line breaks: browsers turn
+  Enter into `<div>` / `<br>` markup and the blur handler saved `textContent`.
+  Content is now edited as `plaintext-only` where supported and read back
+  through `editableText()`, which maps that markup to newlines.
 - A full `render()` with culling enabled laid the board out twice; visibility
   is now decided before insertion (3.8× faster first render on 1000 blocks).
 

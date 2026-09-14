@@ -16,6 +16,8 @@ import {
   findAlignment, // pure alignment maths behind the snap guides
   LINK_TYPES, // ['single', 'reverse', 'double']
   DEFAULT_BLOCK_SIZE, // { width: 250, height: 150 }
+  DEFAULT_STRINGS, // every interface string with its English default
+  formatString, // fills {placeholders} in a string
   connectionPoint, // pure geometry helper used by the connection layer
 } from 'free-block-engine';
 ```
@@ -51,7 +53,9 @@ The browser-global build exposes the same names under `window.FreeBlockEngine`.
 | `setBlockData(id, data)`                         | `boolean`       | Undoable; replaces the serializable `data` payload                         |
 | `duplicateBlock(id)`                             | `Block \| null` | Copies content/type/size/data (not links), offsets position                |
 | `bringToFront(id)`                               | `boolean`       | Raises the block; **not** undoable, but persisted by export                |
+| `sendToBack(id)`                                 | `boolean`       | Undoable; lowers the block, keeping every index ≥ 0                        |
 | `setBlockZIndex(id, zIndex)`                     | `boolean`       | Undoable; explicit stacking order                                          |
+| `normalizeZOrder()`                              | `boolean`       | Undoable; compacts the order to `0..n-1`; `false` when already compact     |
 | `deleteBlock(id)`                                | `boolean`       | Undoable; removes all links pointing at the block                          |
 | `clear()`                                        | `void`          | Undoable; removes everything                                               |
 | `arrangeBlocks(columns = 3)`                     | `void`          | Grid layout; one undo step                                                 |
@@ -93,6 +97,17 @@ direct model setters, go through the engine.
 | ---------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `exportToJSON()`       | `string`  | `{ version, blocks, settings, exportedAt }`; includes `data` and link labels                                                        |
 | `importFromJSON(json)` | `boolean` | Undoable. Validates payload; tolerates legacy link arrays and `customData`; prunes dangling links; imports only known settings keys |
+
+#### Fragments
+
+A fragment is a subset of the board: `{ version, blocks }` where the links are
+restricted to the blocks in the subset. Fragments back the clipboard and
+`duplicateSelected()`, and let you merge blocks from one board into another.
+
+| Method                            | Returns   | Notes                                                                                                                                                                                                                                   |
+| --------------------------------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `exportBlocks(ids)`               | `object`  | Serializable; unknown ids are skipped                                                                                                                                                                                                   |
+| `importBlocks(fragment, options)` | `Block[]` | Undoable (one step). Accepts a fragment, a full export or their JSON text. Creates blocks with fresh ids, copies `data`, reproduces the links among them, stacks them on top. `options.offset` shifts positions. Bad input returns `[]` |
 
 ### Settings & events
 
@@ -138,24 +153,38 @@ Prefer mutating blocks through engine methods — direct setters
 
 ### `new BlockRenderer(engine, containerOrId, options?)`
 
-| Option                | Default     | Meaning                                   |
-| --------------------- | ----------- | ----------------------------------------- |
-| `defaultLinkType`     | `'single'`  | Used by linking mode and `linkSelected()` |
-| `readOnly`            | `false`     | Disable all editing interactions          |
-| `showMinimap`         | `true`      | Mount the minimap                         |
-| `confirmDelete`       | `true`      | `window.confirm` before deleting          |
-| `minZoom` / `maxZoom` | `0.2` / `3` | Camera zoom bounds                        |
-| `keyboardShortcuts`   | `false`     | Built-in hotkeys (see below)              |
-| `renderContent`       | `null`      | Custom content renderer hook (see below)  |
-| `theme`               | `'light'`   | `'light'`, `'dark'` or `'auto'`           |
-| `snapGuides`          | `false`     | Alignment snapping while dragging         |
-| `snapThreshold`       | `6`         | Screen px within which alignment applies  |
-| `contextMenu`         | `false`     | Right-click and long-press menu           |
-| `contextMenuItems`    | `null`      | `(target, defaults) => items` hook        |
-| `cullOffscreen`       | `false`     | Hide blocks outside the viewport          |
-| `cullMargin`          | `400`       | Margin kept visible when culling          |
+| Option                | Default     | Meaning                                    |
+| --------------------- | ----------- | ------------------------------------------ |
+| `defaultLinkType`     | `'single'`  | Used by linking mode and `linkSelected()`  |
+| `readOnly`            | `false`     | Disable all editing interactions           |
+| `showMinimap`         | `true`      | Mount the minimap                          |
+| `confirmDelete`       | `true`      | `window.confirm` before deleting           |
+| `minZoom` / `maxZoom` | `0.2` / `3` | Camera zoom bounds                         |
+| `keyboardShortcuts`   | `false`     | Built-in hotkeys (see below)               |
+| `renderContent`       | `null`      | Custom content renderer hook (see below)   |
+| `theme`               | `'light'`   | `'light'`, `'dark'` or `'auto'`            |
+| `snapGuides`          | `false`     | Alignment snapping while dragging          |
+| `snapThreshold`       | `6`         | Screen px within which alignment applies   |
+| `contextMenu`         | `false`     | Right-click and long-press menu            |
+| `contextMenuItems`    | `null`      | `(target, defaults) => items` hook         |
+| `cullOffscreen`       | `false`     | Hide blocks and edges outside the viewport |
+| `cullMargin`          | `400`       | Margin kept visible when culling           |
+| `strings`             | `null`      | Interface string overrides (see below)     |
+| `showBlockId`         | `true`      | Shortened id in the block header           |
+| `showBlockMeta`       | `true`      | Creation date under the content            |
+| `showLinkChips`       | `true`      | "Connections" chip list on blocks          |
 
 The container must have a height (the stylesheet sizes it `100%`).
+
+### Pointer gestures
+
+Double-click on empty canvas creates a block at that point, selects it and
+focuses its content (`createBlockAt()`); double-clicks on blocks belong to the
+content editor. Ctrl/Cmd+click and Shift+click both extend the selection.
+Blocks resize from all four edges and corners; dragging a left or top handle
+keeps the opposite edge in place and is recorded as one undo step. The handles
+are created when a block is first hovered or selected, not up front, so a
+board of thousands of blocks does not carry eight extra elements each.
 
 ### Keyboard shortcuts
 
@@ -169,11 +198,44 @@ With `keyboardShortcuts: true` the renderer listens on its window:
 | Ctrl+D                | Duplicate the selection                               |
 | Delete / Backspace    | Delete the selection (honours `confirmDelete`)        |
 | Arrows / Shift+Arrows | Nudge the selection by `gridSize` / by 1 px (no snap) |
+| Ctrl+C / Ctrl+X       | Copy / cut the selection to the clipboard             |
+| Ctrl+V                | Paste blocks, or plain text as a new block            |
 
 Shortcuts are ignored while an input, textarea, select or contenteditable
 element has focus; mutating shortcuts are disabled in read-only mode. Enable
 the option on one renderer per page — every enabled instance reacts to the
 same window events.
+
+### Clipboard
+
+Copy and cut put `copySelection()` — an `exportBlocks()` fragment as JSON —
+on the clipboard as `text/plain`, so blocks travel between boards, tabs and
+sessions. They step aside when text is selected on the page or an editor has
+focus, so ordinary copying keeps working. Paste (`paste(text)`) recognises a
+fragment or a full export and creates the blocks with fresh ids and the links
+among them: offset by two grid steps when the originals are in view,
+otherwise centered in the viewport. Any other text becomes one block at the
+viewport center. The new blocks are selected; each paste is one undo step.
+
+### Localization
+
+`strings` overrides any entry of `DEFAULT_STRINGS`; keys left out keep their
+English default. Placeholders in braces (`{count}`, `{date}`) are filled by
+`formatString()`, which is exported as well. `renderer.t(key, vars)` returns
+the resolved string, for hosts that add their own menu items.
+
+| Group         | Keys                                                                                                                                                                                                                  |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Block chrome  | `contentPlaceholder`, `manageLinks`, `deleteBlock`, `connections`, `created`                                                                                                                                          |
+| Confirmations | `confirmDeleteBlock`, `confirmDeleteBlocks`                                                                                                                                                                           |
+| Link editor   | `linkEditorTitle`, `edgeEditorTitle`, `addLink`, `labelPlaceholder`, `emptyContent`, `directionForward`, `directionBackward`, `directionBoth`, `deleteLink`, `close`                                                  |
+| Context menu  | `menuDuplicate`, `menuAddLink`, `menuManageLinks`, `menuBringToFront`, `menuSendToBack`, `menuCenterOnBlock`, `menuDelete`, `menuDeleteBlocks`, `menuSelectAll`, `menuZoomToFit`, `menuResetView`, `menuNewBlockHere` |
+
+### Block chrome
+
+`showBlockId`, `showBlockMeta` and `showLinkChips` switch off the id in the
+header, the creation date and the "Connections" chip list. The type badge
+and the action buttons stay; edges are unaffected.
 
 ### Custom content rendering
 
@@ -201,15 +263,19 @@ back to the default behavior. Sanitize any HTML you inject.
 
 ### Selection & bulk operations
 
-| Method                               | Notes                                              |
-| ------------------------------------ | -------------------------------------------------- |
-| `selectBlock(id, multiSelect?)`      | Plain select replaces; multi toggles               |
-| `selectAll()` / `clearSelection()`   |                                                    |
-| `selectInRect(worldRect, additive?)` | Used by the lasso                                  |
-| `getSelectedBlocks()`                | `Block[]`                                          |
-| `linkSelected(linkType?)`            | Chains the selection; one undo step; `false` if <2 |
-| `duplicateSelected()`                | Returns the copies and selects them                |
-| `deleteSelected()`                   | Returns the count; one undo step                   |
+| Method                                  | Notes                                                                     |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `selectBlock(id, multiSelect?)`         | Plain select replaces; multi toggles                                      |
+| `selectAll()` / `clearSelection()`      |                                                                           |
+| `selectInRect(worldRect, additive?)`    | Used by the lasso                                                         |
+| `getSelectedBlocks()`                   | `Block[]`                                                                 |
+| `linkSelected(linkType?)`               | Chains the selection; one undo step; `false` if <2                        |
+| `duplicateSelected()`                   | Returns the copies and selects them; links among the selection are copied |
+| `deleteSelected()`                      | Returns the count; one undo step                                          |
+| `createBlockAt(world, content?, type?)` | Create, select and focus a block; `null` in read-only mode                |
+| `focusBlockContent(id)`                 | Put the caret into a block's editor                                       |
+| `copySelection()`                       | Fragment JSON of the selection, or `null`                                 |
+| `paste(text)`                           | Fragment or plain text → new, selected blocks                             |
 
 ### Linking & editors
 
@@ -229,6 +295,7 @@ back to the default behavior. Sanitize any HTML you inject.
 | `setTheme(theme)` / `getTheme()`              | Switch scheme; `getTheme()` resolves `'auto'`           |
 | `onThemeChange`                               | Callback fired when an `auto` theme follows the OS      |
 | `setCullOffscreen(enabled)`                   | Toggle culling; `applyCulling()` forces a pass          |
+| `getCullBounds()`                             | World rect in effect for culling, or `null`             |
 | `exportToSVG(options?)`                       | Standalone SVG markup of the whole board                |
 | `exportToPNG(options?)`                       | `Promise<Blob>`; needs a browser (canvas)               |
 | `openContextMenu({clientX, clientY, target})` | Open the menu programmatically                          |
@@ -282,7 +349,10 @@ suppresses the menu.
 rect by toggling `.fbe-offscreen`. Elements stay in the renderer's map, so
 selection, geometry and host queries are unaffected. Blocks under an active
 gesture or containing the focused element are never hidden, and nothing is
-culled while the container has no measurable size. See
+culled while the container has no measurable size. Edges are culled by their
+bounding box, so an edge running from a visible block to a hidden one stays
+visible. The bounds are re-evaluated on camera changes and block moves;
+after resizing the container call `applyCulling()`. See
 [architecture.md](architecture.md) for the measured effect.
 
 ### Image export

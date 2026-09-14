@@ -12,6 +12,7 @@
  */
 
 import { LINK_TYPES } from './blockEngine.js';
+import { DEFAULT_BLOCK_SIZE } from './block.js';
 import { injectStyles } from './styles.js';
 import { ConnectionLayer } from './connectionLayer.js';
 import { Minimap } from './minimap.js';
@@ -20,6 +21,8 @@ import { InteractionController } from './interaction.js';
 import { GuideOverlay } from './snapGuides.js';
 import { ContextMenu } from './contextMenu.js';
 import { exportToSVG, exportToPNG } from './exporter.js';
+import { editableText, editableMode } from './editableText.js';
+import { DEFAULT_STRINGS, formatString } from './strings.js';
 
 export class BlockRenderer {
   /**
@@ -53,6 +56,12 @@ export class BlockRenderer {
    *   touch long-press (false).
    * @param {(target: import('./contextMenu.js').ContextMenuTarget, defaults: import('./contextMenu.js').ContextMenuItem[]) => import('./contextMenu.js').ContextMenuItem[]} [options.contextMenuItems]
    *   Replace or amend the menu items.
+   * @param {Partial<import('./strings.js').Strings>} [options.strings] Override the
+   *   interface strings (tooltips, menu labels, confirmations) for localization;
+   *   keys left out keep their English default (see DEFAULT_STRINGS).
+   * @param {boolean} [options.showBlockId] Show the shortened id in the block header (true).
+   * @param {boolean} [options.showBlockMeta] Show the creation date under the content (true).
+   * @param {boolean} [options.showLinkChips] Show the "Connections" chip list on blocks (true).
    */
   constructor(engine, containerOrId, options = {}) {
     this.engine = engine;
@@ -78,8 +87,14 @@ export class BlockRenderer {
       snapThreshold: 6,
       contextMenu: false,
       contextMenuItems: null,
+      strings: null,
+      showBlockId: true,
+      showBlockMeta: true,
+      showLinkChips: true,
       ...options,
     };
+    /** Interface strings: the defaults overlaid with options.strings. */
+    this.strings = { ...DEFAULT_STRINGS, ...(this.options.strings ?? {}) };
 
     /** @type {Set<string>} */
     this.selectedBlocks = new Set();
@@ -99,9 +114,12 @@ export class BlockRenderer {
     this._engineSubs = [];
     this._destroyed = false;
     this._cullPending = false;
+    /** Cull bounds of the last culling pass, reused by per-frame edge updates. */
+    this._cullBoundsCache = null;
 
     const doc = this.container.ownerDocument;
     injectStyles(doc);
+    this._editableMode = editableMode(doc);
     this.container.classList.add('blocks-container');
     this.container.innerHTML = '';
     this.viewport = doc.createElement('div');
@@ -121,6 +139,16 @@ export class BlockRenderer {
     this.linkEditor = new LinkEditorPopup(engine, this);
     this.interaction = new InteractionController(this);
     this.interaction.attach(this._abort.signal);
+
+    // Resize handles are created lazily for the block under the pointer.
+    this.container.addEventListener(
+      'pointerover',
+      (e) => {
+        const blockEl = e.target.closest ? e.target.closest('.block') : null;
+        if (blockEl) this._ensureHandles(blockEl);
+      },
+      { signal: this._abort.signal }
+    );
 
     // Close the popups when clicking outside of them.
     doc.addEventListener(
@@ -143,6 +171,16 @@ export class BlockRenderer {
       this.container.classList.add('read-only');
     }
     this.render();
+  }
+
+  /**
+   * An interface string with its placeholders filled.
+   * @param {keyof import('./strings.js').Strings} key
+   * @param {Record<string, string|number>} [vars]
+   * @returns {string}
+   */
+  t(key, vars) {
+    return formatString(this.strings[key] ?? DEFAULT_STRINGS[key] ?? key, vars);
   }
 
   // ----------------------------------------------------------------- theme
@@ -220,7 +258,7 @@ export class BlockRenderer {
 
   _subscribeEngine() {
     this._sub('blockCreated', (block) => this._onBlockAdded(block));
-    this._sub('blockRestored', () => this.render());
+    this._sub('blockRestored', (block) => this._onBlockRestored(block));
     this._sub('blockDeleted', (payload) => this._onBlockRemoved(payload));
     this._sub('blockUpdated', (block) => this._onBlockUpdated(block));
     this._sub('blockMoved', (block) => this._onBlockGeometry(block));
@@ -250,6 +288,23 @@ export class BlockRenderer {
     this.connections.updateForBlock(block.id);
     this.cullBlock(block.id);
     this.minimap.update();
+  }
+
+  /**
+   * Undo of a delete (or redo of a create) brings one block back together
+   * with its links: add its element and edges and refresh the chips of its
+   * neighbours. A full render() here cost O(n) DOM work per undo step.
+   */
+  _onBlockRestored(block) {
+    const stale = this.blockElements.get(block.id);
+    if (stale) stale.remove();
+    this._onBlockAdded(block);
+    for (const targetId of block.links.keys()) {
+      this._refreshChips(targetId);
+    }
+    for (const source of this.engine.getIncomingLinks(block.id)) {
+      this._refreshChips(source.id);
+    }
   }
 
   _onBlockRemoved({ id, affected = [] }) {
@@ -313,6 +368,7 @@ export class BlockRenderer {
     const bounds =
       this.options.cullOffscreen && this.viewMode === 'free' ? this._cullBounds() : null;
     const active = bounds ? this.container.ownerDocument.activeElement : null;
+    this._cullBoundsCache = bounds;
 
     for (const block of this.engine.getAllBlocks()) {
       const el = this._createBlockElement(block);
@@ -346,21 +402,23 @@ export class BlockRenderer {
       div.style.setProperty('--fbe-z', String(block.zIndex));
     }
 
-    const header = doc.createElement('div');
-    header.className = 'block-header';
-    const idSpan = doc.createElement('span');
-    idSpan.className = 'block-id';
-    idSpan.textContent = `${block.id.slice(0, 14)}\u2026`;
-    idSpan.title = block.id;
-    header.appendChild(idSpan);
-    div.appendChild(header);
+    if (this.options.showBlockId) {
+      const header = doc.createElement('div');
+      header.className = 'block-header';
+      const idSpan = doc.createElement('span');
+      idSpan.className = 'block-id';
+      idSpan.textContent = `${block.id.slice(0, 14)}\u2026`;
+      idSpan.title = block.id;
+      header.appendChild(idSpan);
+      div.appendChild(header);
+    }
 
     const actions = doc.createElement('div');
     actions.className = 'block-actions';
     const linksBtn = doc.createElement('button');
     linksBtn.className = 'block-action links';
     linksBtn.textContent = '\u{1F517}';
-    linksBtn.title = 'Manage links';
+    linksBtn.title = this.t('manageLinks');
     linksBtn.onclick = (e) => {
       e.stopPropagation();
       this.openLinkEditor(block.id);
@@ -368,7 +426,7 @@ export class BlockRenderer {
     const deleteBtn = doc.createElement('button');
     deleteBtn.className = 'block-action delete';
     deleteBtn.textContent = '\u00d7';
-    deleteBtn.title = 'Delete block';
+    deleteBtn.title = this.t('deleteBlock');
     deleteBtn.onclick = (e) => {
       e.stopPropagation();
       this.deleteBlock(block.id);
@@ -379,13 +437,15 @@ export class BlockRenderer {
 
     const content = doc.createElement('div');
     content.className = 'block-content';
-    content.dataset.placeholder = 'Click to edit\u2026';
+    content.dataset.placeholder = this.t('contentPlaceholder');
     if (!this._renderCustomContent(block, content)) {
       content.textContent = block.content;
       if (!this.options.readOnly) {
-        content.contentEditable = 'true';
+        // The attribute is what browsers read; jsdom only reflects the property.
+        content.setAttribute('contenteditable', this._editableMode);
+        content.contentEditable = this._editableMode;
         content.addEventListener('blur', () => {
-          this.engine.setBlockContent(block.id, content.textContent);
+          this.engine.setBlockContent(block.id, editableText(content));
         });
         content.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && e.ctrlKey) {
@@ -401,26 +461,53 @@ export class BlockRenderer {
     const chips = this._buildChips(block);
     if (chips) div.appendChild(chips);
 
-    const metadata = doc.createElement('div');
-    metadata.className = 'block-metadata';
-    metadata.textContent = `Created: ${new Date(block.metadata.createdAt).toLocaleString()}`;
-    div.appendChild(metadata);
+    if (this.options.showBlockMeta) {
+      const metadata = doc.createElement('div');
+      metadata.className = 'block-metadata';
+      metadata.textContent = this.t('created', {
+        date: new Date(block.metadata.createdAt).toLocaleString(),
+      });
+      div.appendChild(metadata);
+    }
 
     const typeSpan = doc.createElement('span');
     typeSpan.className = 'block-type';
     typeSpan.textContent = block.type;
     div.appendChild(typeSpan);
 
-    if (this.viewMode === 'free' && !this.options.readOnly) {
-      for (const dir of ['right', 'bottom', 'corner']) {
-        const handle = doc.createElement('div');
-        handle.className = `resize-handle resize-handle-${dir}`;
-        handle.dataset.dir = dir;
-        div.appendChild(handle);
-      }
-    }
-
     return div;
+  }
+
+  /**
+   * Add the eight resize handles to a block element the first time it is
+   * hovered or selected. Creating them up front costs eight extra elements
+   * per block — a real first-render and paint tax on boards of thousands —
+   * while only the block under the pointer (or in the selection) can be
+   * resized anyway.
+   *
+   * @param {HTMLElement} el
+   */
+  _ensureHandles(el) {
+    if (el.dataset.handles || this.viewMode !== 'free' || this.options.readOnly) return;
+    el.dataset.handles = '1';
+    const doc = el.ownerDocument;
+    // 'corner' is the bottom-right handle (kept under its historical name).
+    const dirs = [
+      'top-left',
+      'top',
+      'top-right',
+      'left',
+      'right',
+      'bottom-left',
+      'bottom',
+      'corner',
+    ];
+    for (const dir of dirs) {
+      const handle = doc.createElement('div');
+      handle.className = `resize-handle resize-handle-${dir}`;
+      handle.dataset.dir = dir;
+      el.appendChild(handle);
+    }
   }
 
   /**
@@ -445,8 +532,9 @@ export class BlockRenderer {
     }
   }
 
-  /** Build the "Connections:" chip list, or null when the block has none. */
+  /** Build the "Connections:" chip list, or null when the block has none (or chips are off). */
   _buildChips(block) {
+    if (!this.options.showLinkChips) return null;
     const outgoing = [...block.links.entries()].map(([id, meta]) => [id, meta.type]);
     const incoming = this.engine
       .getIncomingLinks(block.id)
@@ -460,7 +548,7 @@ export class BlockRenderer {
     div.className = 'block-links';
     const label = doc.createElement('div');
     label.className = 'block-links-label';
-    label.textContent = 'Connections:';
+    label.textContent = this.t('connections');
     div.appendChild(label);
 
     for (const [linkId, kind] of all) {
@@ -496,7 +584,7 @@ export class BlockRenderer {
     } else if (existing) {
       existing.remove();
     } else if (fresh) {
-      el.insertBefore(fresh, el.querySelector('.block-metadata'));
+      el.insertBefore(fresh, el.querySelector('.block-metadata, .block-type'));
     }
   }
 
@@ -568,6 +656,8 @@ export class BlockRenderer {
     const gridSize = this.engine.settings.gridSize * zoom;
     this.container.style.backgroundSize = `${gridSize}px ${gridSize}px`;
     this.container.style.backgroundPosition = `${x}px ${y}px`;
+    // Lets the stylesheet keep screen-sized strokes (the edge hit area) at any zoom.
+    this.container.style.setProperty('--fbe-zoom', String(zoom));
     this.scheduleCull();
     this.minimap.update();
     if (typeof this.onCameraChange === 'function') {
@@ -639,6 +729,8 @@ export class BlockRenderer {
     if (this._destroyed) return;
     const bounds =
       this.options.cullOffscreen && this.viewMode === 'free' ? this._cullBounds() : null;
+    this._cullBoundsCache = bounds;
+    this.connections.applyCulling(bounds);
     if (!bounds) {
       for (const el of this.blockElements.values()) {
         el.classList.remove('fbe-offscreen');
@@ -651,6 +743,18 @@ export class BlockRenderer {
     }
   }
 
+  /**
+   * World-space cull bounds in effect, or null when nothing is culled. Cached
+   * by the culling passes so that edge relayouts during a drag never have to
+   * measure the container.
+   *
+   * @returns {{left: number, top: number, right: number, bottom: number}|null}
+   */
+  getCullBounds() {
+    if (!this.options.cullOffscreen || this.viewMode !== 'free') return null;
+    return this._cullBoundsCache;
+  }
+
   /** Re-evaluate culling for a single block (cheaper than a full pass). */
   cullBlock(id) {
     if (this._destroyed || !this.options.cullOffscreen || this.viewMode !== 'free') return;
@@ -658,6 +762,7 @@ export class BlockRenderer {
     if (!el) return;
     const bounds = this._cullBounds();
     if (!bounds) return;
+    this._cullBoundsCache = bounds;
     this._updateCullState(id, el, bounds, this.container.ownerDocument.activeElement);
   }
 
@@ -839,7 +944,9 @@ export class BlockRenderer {
 
   _applySelectionClasses() {
     for (const [id, el] of this.blockElements) {
-      el.classList.toggle('selected', this.selectedBlocks.has(id));
+      const selected = this.selectedBlocks.has(id);
+      el.classList.toggle('selected', selected);
+      if (selected) this._ensureHandles(el); // touch devices have no hover
     }
   }
 
@@ -866,13 +973,17 @@ export class BlockRenderer {
     return true;
   }
 
-  /** Duplicate the selected blocks and select the copies. */
+  /**
+   * Duplicate the selected blocks and select the copies. Links between the
+   * selected blocks are reproduced between their copies (one undo step).
+   */
   duplicateSelected() {
     const ids = [...this.selectedBlocks];
     if (ids.length === 0) return [];
-    this.engine.beginBatch('duplicate');
-    const copies = ids.map((id) => this.engine.duplicateBlock(id)).filter(Boolean);
-    this.engine.endBatch();
+    const offset = this.engine.settings.gridSize * 2;
+    const copies = this.engine.importBlocks(this.engine.exportBlocks(ids), {
+      offset: { x: offset, y: offset },
+    });
     this.selectedBlocks = new Set(copies.map((c) => c.id));
     this._applySelectionClasses();
     this.minimap.update();
@@ -892,12 +1003,128 @@ export class BlockRenderer {
     return ids.length;
   }
 
+  /**
+   * Create a block with its top-left corner at a world point, select it and
+   * put the caret into its content so the user can type right away. Used by
+   * canvas double-click and the context menu.
+   *
+   * @param {{x: number, y: number}} world
+   * @param {string} [content]
+   * @param {string} [type]
+   * @returns {import('./block.js').Block|null} null in read-only mode.
+   */
+  createBlockAt(world, content = '', type = 'default') {
+    if (this.options.readOnly) return null;
+    const block = this.engine.createBlock(content, type, {
+      x: Math.round(world.x),
+      y: Math.round(world.y),
+    });
+    this.selectBlock(block.id);
+    this.focusBlockContent(block.id);
+    return block;
+  }
+
+  /** Put the caret into a block's content editor, when it is editable. @param {string} id */
+  focusBlockContent(id) {
+    const el = this.blockElements.get(id);
+    const content = el ? el.querySelector('.block-content') : null;
+    if (content && content.getAttribute('contenteditable') && typeof content.focus === 'function') {
+      content.focus();
+    }
+  }
+
+  // ------------------------------------------------------------- clipboard
+
+  /**
+   * The selection as a serialized fragment (see `engine.exportBlocks()`), or
+   * null when nothing is selected. This is what Ctrl+C puts on the clipboard.
+   * @returns {string|null}
+   */
+  copySelection() {
+    if (this.selectedBlocks.size === 0) return null;
+    return JSON.stringify(this.engine.exportBlocks([...this.selectedBlocks]));
+  }
+
+  /**
+   * Paste clipboard text. A fragment (from `copySelection()`,
+   * `engine.exportBlocks()` or a full export) becomes new blocks — offset by
+   * two grid steps when the originals are in view, otherwise centered in the
+   * viewport. Any other text becomes one block at the viewport center. The
+   * new blocks are selected; one undo step.
+   *
+   * @param {string} text
+   * @returns {import('./block.js').Block[]} The created blocks (empty in read-only mode).
+   */
+  paste(text) {
+    if (this.options.readOnly || typeof text !== 'string' || text.trim() === '') return [];
+    let fragment = null;
+    try {
+      const parsed = JSON.parse(text);
+      if (parsed && Array.isArray(parsed.blocks)) fragment = parsed;
+    } catch {
+      /* not JSON: plain text */
+    }
+    const view = this.getViewRect();
+    const center = { x: view.x + view.width / 2, y: view.y + view.height / 2 };
+    const grid = this.engine.settings.gridSize;
+    let blocks;
+    if (fragment) {
+      blocks = this.engine.importBlocks(fragment, {
+        offset: this._pasteOffset(fragment, view, center),
+      });
+    } else {
+      const snap = (value) => Math.round(value / grid) * grid;
+      blocks = [
+        this.engine.createBlock(text, 'default', {
+          x: snap(center.x - DEFAULT_BLOCK_SIZE.width / 2),
+          y: snap(center.y - DEFAULT_BLOCK_SIZE.height / 2),
+        }),
+      ];
+    }
+    if (blocks.length === 0) return [];
+    this.selectedBlocks = new Set(blocks.map((block) => block.id));
+    this._applySelectionClasses();
+    this.minimap.update();
+    return blocks;
+  }
+
+  /**
+   * Offset for a pasted fragment: two grid steps when its blocks overlap the
+   * view (paste next to the originals), otherwise the shift that centers the
+   * fragment in the view.
+   */
+  _pasteOffset(fragment, view, center) {
+    const grid = this.engine.settings.gridSize;
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const raw of fragment.blocks) {
+      const x = raw?.position?.x;
+      const y = raw?.position?.y;
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      const width = raw.size?.width ?? DEFAULT_BLOCK_SIZE.width;
+      const height = raw.size?.height ?? DEFAULT_BLOCK_SIZE.height;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x + width);
+      maxY = Math.max(maxY, y + height);
+    }
+    if (!Number.isFinite(minX)) return { x: 0, y: 0 };
+    const inView =
+      minX < view.x + view.width && maxX > view.x && minY < view.y + view.height && maxY > view.y;
+    if (inView) return { x: grid * 2, y: grid * 2 };
+    const dx = center.x - (minX + maxX) / 2;
+    const dy = center.y - (minY + maxY) / 2;
+    return { x: Math.round(dx / grid) * grid, y: Math.round(dy / grid) * grid };
+  }
+
   /** Delete one block, honouring options.confirmDelete. @param {string} id */
   deleteBlock(id) {
     if (this.options.readOnly) return;
     if (this.options.confirmDelete) {
       const win = this.container.ownerDocument.defaultView;
-      if (win && typeof win.confirm === 'function' && !win.confirm('Delete this block?')) {
+      if (win && typeof win.confirm === 'function' && !win.confirm(this.t('confirmDeleteBlock'))) {
         return;
       }
     }
@@ -1053,5 +1280,6 @@ export class BlockRenderer {
     );
     this.container.style.backgroundSize = '';
     this.container.style.backgroundPosition = '';
+    this.container.style.removeProperty('--fbe-zoom');
   }
 }

@@ -14,3 +14,4 @@ export { Autosave, createAutosave } from './autosave.js';
 export { findAlignment } from './snapGuides.js';
 export { ContextMenu } from './contextMenu.js';
 export { exportToSVG, exportToPNG } from './exporter.js';
+export { DEFAULT_STRINGS, formatString } from './strings.js';

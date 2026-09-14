@@ -42,7 +42,7 @@
     {
       "name": "browser global (minified, uncompressed)",
       "path": "dist/free-block-engine.global.min.js",
-      "limit": "90 kB",
+      "limit": "100 kB",
       "gzip": false,
       "brotli": false
     }

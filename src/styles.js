@@ -116,7 +116,9 @@ const CSS = `
     overflow: hidden;
     box-sizing: border-box;
     /* Per-block order comes from a custom property, not an inline z-index:
-       an inline value would beat the .dragging / :hover rules below. */
+       an inline value would beat the .dragging / :hover rules below. Those
+       rules sit at 1 000 000+, far above any order bringToFront() reaches
+       in practice (it grows by one per selection change). */
     z-index: calc(2 + var(--fbe-z, 0));
   }
 
@@ -131,7 +133,7 @@ const CSS = `
   .block:hover {
     border-color: var(--fbe-accent);
     box-shadow: 0 4px 8px var(--fbe-shadow);
-    z-index: 10;
+    z-index: 1000000;
   }
 
   .block.selected {
@@ -142,13 +144,13 @@ const CSS = `
 
   .block.dragging {
     opacity: 0.85;
-    z-index: 1000;
+    z-index: 1000002;
     cursor: grabbing;
     transition: none;
   }
 
   .block.resizing {
-    z-index: 999;
+    z-index: 1000001;
     transition: none;
   }
 
@@ -212,7 +214,7 @@ const CSS = `
     user-select: text;
   }
 
-  .block-content[contenteditable='true']:focus {
+  .block-content[contenteditable]:focus {
     outline: none;
     padding: 5px;
     padding-bottom: 25px;
@@ -270,7 +272,8 @@ const CSS = `
     z-index: 3;
   }
 
-  .block:hover .block-actions {
+  .block:hover .block-actions,
+  .block.selected .block-actions {
     display: flex;
     gap: 5px;
   }
@@ -310,13 +313,15 @@ const CSS = `
   .resize-handle {
     position: absolute;
     background: var(--fbe-accent);
-    opacity: 0;
+    display: none;
+    opacity: 0.3;
     transition: opacity 0.2s;
     z-index: 4;
   }
 
-  .block:hover .resize-handle {
-    opacity: 0.3;
+  .block:hover .resize-handle,
+  .block.selected .resize-handle {
+    display: block;
   }
 
   .resize-handle:hover,
@@ -325,7 +330,7 @@ const CSS = `
   }
 
   .read-only .resize-handle {
-    display: none;
+    display: none !important;
   }
 
   .resize-handle-right {
@@ -351,6 +356,50 @@ const CSS = `
     bottom: 0;
     cursor: nwse-resize;
     border-radius: 0 0 6px 0;
+  }
+
+  .resize-handle-left {
+    left: 0;
+    top: 20%;
+    bottom: 20%;
+    width: 6px;
+    cursor: ew-resize;
+  }
+
+  .resize-handle-top {
+    top: 0;
+    left: 20%;
+    right: 20%;
+    height: 6px;
+    cursor: ns-resize;
+  }
+
+  .resize-handle-top-left,
+  .resize-handle-top-right,
+  .resize-handle-bottom-left {
+    width: 12px;
+    height: 12px;
+  }
+
+  .resize-handle-top-left {
+    left: 0;
+    top: 0;
+    cursor: nwse-resize;
+    border-radius: 6px 0 0 0;
+  }
+
+  .resize-handle-top-right {
+    right: 0;
+    top: 0;
+    cursor: nesw-resize;
+    border-radius: 0 6px 0 0;
+  }
+
+  .resize-handle-bottom-left {
+    left: 0;
+    bottom: 0;
+    cursor: nesw-resize;
+    border-radius: 0 0 0 6px;
   }
 
   .connections-layer {
@@ -386,7 +435,9 @@ const CSS = `
   .fbe-edge .edge-hit {
     fill: none;
     stroke: transparent;
-    stroke-width: 14;
+    /* 14 screen px at any zoom. Not vector-effect: non-scaling-stroke — that
+       makes the browser re-evaluate every hit path on each camera frame. */
+    stroke-width: calc(14px / var(--fbe-zoom, 1));
     pointer-events: stroke;
     cursor: pointer;
   }
@@ -398,6 +449,10 @@ const CSS = `
   .fbe-edge:hover .edge-path {
     stroke-width: 3;
     opacity: 1;
+  }
+
+  .fbe-edge.fbe-offscreen {
+    display: none;
   }
 
   .fbe-edge .edge-dot {
@@ -438,7 +493,7 @@ const CSS = `
     width: 0;
     height: 0;
     pointer-events: none;
-    z-index: 950;
+    z-index: 1000003;
   }
 
   .fbe-guide {

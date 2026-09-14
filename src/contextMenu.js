@@ -164,27 +164,28 @@ export class ContextMenu {
   _defaultItems(target) {
     const r = this.renderer;
     const readOnly = r.options.readOnly;
+    const t = (key, vars) => r.t(key, vars);
 
     if (target.type === 'block' && target.blockId) {
       const id = target.blockId;
       const view = [
-        { label: 'Bring to front', action: () => this.engine.bringToFront(id) },
-        { label: 'Center on block', action: () => r.centerOnBlock(id) },
+        { label: t('menuBringToFront'), action: () => this.engine.bringToFront(id) },
+        { label: t('menuCenterOnBlock'), action: () => r.centerOnBlock(id) },
       ];
       if (readOnly) return view;
       const selectedCount = r.selectedBlocks.size;
       return [
-        { label: 'Duplicate', action: () => this.engine.duplicateBlock(id) },
-        {
-          label: 'Add link…',
-          action: () => r.startLinkingMode(id),
-        },
-        { label: 'Manage links…', action: () => r.openLinkEditor(id) },
+        { label: t('menuDuplicate'), action: () => this.engine.duplicateBlock(id) },
+        { label: t('menuAddLink'), action: () => r.startLinkingMode(id) },
+        { label: t('menuManageLinks'), action: () => r.openLinkEditor(id) },
         { separator: true },
-        ...view,
+        view[0],
+        { label: t('menuSendToBack'), action: () => this.engine.sendToBack(id) },
+        view[1],
         { separator: true },
         {
-          label: selectedCount > 1 ? `Delete ${selectedCount} blocks` : 'Delete',
+          label:
+            selectedCount > 1 ? t('menuDeleteBlocks', { count: selectedCount }) : t('menuDelete'),
           action: () => {
             if (selectedCount > 1 && r.selectedBlocks.has(id)) r.deleteSelected();
             else r.deleteBlock(id);
@@ -194,22 +195,13 @@ export class ContextMenu {
     }
 
     const view = [
-      { label: 'Select all', action: () => r.selectAll() },
-      { label: 'Zoom to fit', action: () => r.zoomToFit() },
-      { label: 'Reset view', action: () => r.resetView() },
+      { label: t('menuSelectAll'), action: () => r.selectAll() },
+      { label: t('menuZoomToFit'), action: () => r.zoomToFit() },
+      { label: t('menuResetView'), action: () => r.resetView() },
     ];
     if (readOnly) return view;
     return [
-      {
-        label: 'New block here',
-        action: () => {
-          const block = this.engine.createBlock('', 'default', {
-            x: Math.round(target.world.x),
-            y: Math.round(target.world.y),
-          });
-          r.selectBlock(block.id);
-        },
-      },
+      { label: t('menuNewBlockHere'), action: () => r.createBlockAt(target.world) },
       { separator: true },
       ...view,
     ];

@@ -41,7 +41,11 @@
 - **Light and dark themes** — a built-in dark preset plus `prefers-color-scheme` support (`theme: 'auto'`)
 - **Alignment guides** — dragged blocks snap to the edges and centers of their neighbours (`snapGuides: true`)
 - **Context menu** — right-click or long-press, keyboard operable and fully customizable (`contextMenu: true`)
-- **Stacking order** — blocks come to the front on select and drag; the order is exported with the board
+- **Stacking order** — blocks come to the front on select and drag, can be sent to the back; the order is exported with the board
+- **Clipboard** — Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste blocks together with the links between them, also across boards; pasted plain text becomes a block
+- **Quick creation** — double-click the empty canvas to create a block and start typing
+- **Resize from any side** — eight handles; the opposite edge stays where it is
+- **Localization** — every tooltip, menu label and confirmation is overridable through `strings`
 
 ### Data
 
@@ -56,7 +60,7 @@
 - **Zero dependencies** — pure JavaScript, no runtime packages
 - **ESM / CJS / browser global** builds + TypeScript declarations generated from JSDoc, with fully typed engine events
 - **Leak-free renderer** — one delegated Pointer Events pipeline, `destroy()` releases everything; multiple instances can coexist on a page
-- **Incremental rendering** — engine events update only the affected DOM nodes, with optional offscreen culling for large boards
+- **Incremental rendering** — engine events update only the affected DOM nodes; edges are indexed and relaid out in place, with optional offscreen culling of blocks and edges for large boards
 - **Tested** — Vitest + jsdom suite for engine and renderer, CI via GitHub Actions
 
 ## 📦 Installation
@@ -130,7 +134,9 @@ engine.deleteBlock(block.id);
 engine.clear();
 engine.arrangeBlocks(3); // grid layout in N columns, one undo step
 engine.bringToFront(block.id); // stacking order; not recorded in history
+engine.sendToBack(block.id); // undoable
 engine.setBlockZIndex(block.id, 5); // explicit order (undoable)
+engine.normalizeZOrder(); // compact the order to 0..n-1 (undoable)
 
 // Queries
 engine.getBlock(id);
@@ -160,6 +166,10 @@ engine.clearHistory();
 const json = engine.exportToJSON();
 engine.importFromJSON(json); // validated; returns false on bad payloads
 
+// Fragments (clipboard, duplication, merging boards)
+const fragment = engine.exportBlocks([a.id, b.id]); // the blocks and the links among them
+engine.importBlocks(fragment, { offset: { x: 40, y: 40 } }); // fresh ids, links kept, one undo step
+
 // Settings
 engine.updateSettings({ gridSize: 40 }); // unknown keys are ignored
 ```
@@ -181,8 +191,12 @@ const renderer = new BlockRenderer(engine, 'container-id', {
   snapThreshold: 6, // screen px within which alignment kicks in
   contextMenu: false, // right-click / long-press menu
   contextMenuItems: null, // (target, defaults) => items
-  cullOffscreen: false, // hide blocks outside the viewport (large boards)
+  cullOffscreen: false, // hide blocks and edges outside the viewport (large boards)
   cullMargin: 400, // world-space margin kept visible when culling
+  strings: null, // override interface strings, see Localization
+  showBlockId: true, // shortened id in the block header
+  showBlockMeta: true, // creation date under the content
+  showLinkChips: true, // "Connections" chip list on blocks
 });
 
 // Theme
@@ -211,8 +225,13 @@ renderer.getSelectedBlocks();
 
 // Bulk operations (each is a single undo step)
 renderer.linkSelected('double');
-renderer.duplicateSelected();
+renderer.duplicateSelected(); // copies keep the links among them
 renderer.deleteSelected();
+
+// Creation and clipboard
+renderer.createBlockAt({ x: 100, y: 100 }); // create, select and focus for typing
+const text = renderer.copySelection(); // fragment JSON, or null without a selection
+renderer.paste(text); // fragment → new blocks with links; plain text → one block
 
 // Linking mode: next clicked block becomes the target
 renderer.startLinkingMode(sourceId, 'single');
@@ -257,10 +276,11 @@ or the other listeners.
 
 | Action                    | Input                                                       |
 | ------------------------- | ----------------------------------------------------------- |
+| Create a block            | Double-click empty canvas (or the context menu)             |
 | Move block(s)             | Drag a block (drags the whole selection)                    |
-| Resize block              | Drag the right / bottom / corner handle                     |
+| Resize block              | Drag any edge or corner handle                              |
 | Select                    | Click a block                                               |
-| Multi-select              | Ctrl+click, or lasso-drag on empty canvas                   |
+| Multi-select              | Ctrl+click or Shift+click, or lasso-drag on empty canvas    |
 | Clear selection           | Click empty canvas or press Escape                          |
 | Edit content              | Click into the text, Ctrl+Enter to finish                   |
 | Edit a connection         | Click the connection line                                   |
@@ -272,8 +292,11 @@ or the other listeners.
 With `keyboardShortcuts: true` the renderer also handles: Ctrl/Cmd+Z — undo,
 Ctrl+Y / Ctrl+Shift+Z — redo, Ctrl+A — select all, Ctrl+D — duplicate,
 Delete/Backspace — delete the selection, arrow keys — nudge the selection by
-one grid step (Shift: by 1 px, without snapping). Shortcuts are ignored while
-typing, and mutating ones are disabled in read-only mode.
+one grid step (Shift: by 1 px, without snapping), Ctrl+C / Ctrl+X / Ctrl+V —
+copy, cut and paste the selection through the system clipboard (the links
+between the copied blocks come along; plain text pastes as a new block).
+Shortcuts are ignored while typing, and mutating ones are disabled in
+read-only mode.
 
 ## 🎨 Customization
 
@@ -327,6 +350,40 @@ const renderer = new BlockRenderer(engine, 'canvas', {
           { label: 'Send to review', action: () => review(target.blockId) },
         ]
       : defaults,
+});
+```
+
+### Localization
+
+Every string the renderer shows — tooltips, the link editor, the context menu,
+delete confirmations — comes from one table. Override the keys you need; the
+rest keep their English default. `{count}` and `{date}` placeholders are filled
+in for you.
+
+```javascript
+import { BlockRenderer, DEFAULT_STRINGS } from 'free-block-engine';
+
+const renderer = new BlockRenderer(engine, 'canvas', {
+  strings: {
+    contentPlaceholder: 'Нажмите, чтобы редактировать…',
+    confirmDeleteBlock: 'Удалить блок?',
+    confirmDeleteBlocks: 'Удалить блоки: {count}?',
+    menuNewBlockHere: 'Новый блок здесь',
+  },
+});
+console.log(Object.keys(DEFAULT_STRINGS)); // every overridable key
+```
+
+### Block chrome
+
+Blocks show a shortened id, the creation date and a "Connections" chip list
+by default. Turn them off for a sticky-note look:
+
+```javascript
+const renderer = new BlockRenderer(engine, 'canvas', {
+  showBlockId: false,
+  showBlockMeta: false,
+  showLinkChips: false,
 });
 ```
 
@@ -416,10 +473,15 @@ free-block-engine/
 │   ├── blockEngine.js      # Core engine: graph, history, persistence, events
 │   ├── history.js          # Undo/redo command stack
 │   ├── blockRenderer.js    # Rendering layer: camera, incremental DOM updates
-│   ├── interaction.js      # Delegated Pointer Events gestures
-│   ├── connectionLayer.js  # SVG edges, arrow markers, labels
+│   ├── interaction.js      # Delegated Pointer Events gestures, clipboard
+│   ├── connectionLayer.js  # SVG edges, arrow markers, labels (indexed, culled)
 │   ├── minimap.js          # Navigable minimap
 │   ├── linkEditor.js       # Link editor popup (block & edge modes)
+│   ├── contextMenu.js      # Right-click / long-press menu
+│   ├── snapGuides.js       # Alignment maths and guide overlay
+│   ├── exporter.js         # SVG / PNG export
+│   ├── editableText.js     # Plain text out of a contenteditable element
+│   ├── strings.js          # Interface strings (localization)
 │   ├── autosave.js         # Debounced persistence into localStorage
 │   └── styles.js           # Injected stylesheet (CSS variables)
 ├── dist/                   # ESM, CJS, browser-global builds + .d.ts

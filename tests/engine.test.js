@@ -621,3 +621,129 @@ describe('BlockEngine — settings', () => {
     expect(result.gridSize).toBe(10);
   });
 });
+
+describe('BlockEngine — stacking order helpers', () => {
+  it('sendToBack puts a block below all others as an undoable step', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+    engine.bringToFront(a.id); // a: 1
+    engine.bringToFront(b.id); // b: 2
+    engine.clearHistory();
+
+    expect(engine.sendToBack(b.id)).toBe(true);
+    expect(b.zIndex).toBeLessThan(Math.min(a.zIndex, c.zIndex));
+    expect(engine.getAllBlocks().every((block) => block.zIndex >= 0)).toBe(true);
+    expect(engine.sendToBack(b.id)).toBe(false); // already at the bottom
+    expect(engine.sendToBack('missing')).toBe(false);
+
+    engine.undo();
+    expect(b.zIndex).toBe(2);
+    expect(engine.canUndo()).toBe(false);
+  });
+
+  it('sendToBack keeps indices non-negative so blocks never sink under the edges', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+    // Everybody at 0: sending c to the back has to lift the others instead.
+    expect(engine.sendToBack(c.id)).toBe(true);
+    expect(c.zIndex).toBe(0);
+    expect(a.zIndex).toBeGreaterThan(0);
+    expect(b.zIndex).toBeGreaterThan(a.zIndex);
+  });
+
+  it('normalizeZOrder compacts the indices while keeping the order', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+    engine.setBlockZIndex(a.id, 500);
+    engine.setBlockZIndex(b.id, 40);
+    engine.setBlockZIndex(c.id, 9000);
+    engine.clearHistory();
+
+    expect(engine.normalizeZOrder()).toBe(true);
+    expect([b.zIndex, a.zIndex, c.zIndex]).toEqual([0, 1, 2]);
+    expect(engine.normalizeZOrder()).toBe(false); // already compact
+
+    engine.undo(); // one step for the whole compaction
+    expect([a.zIndex, b.zIndex, c.zIndex]).toEqual([500, 40, 9000]);
+    expect(engine.canUndo()).toBe(false);
+  });
+});
+
+describe('BlockEngine — fragments', () => {
+  it('exportBlocks keeps only the links among the exported blocks', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    const c = engine.createBlock('c');
+    engine.linkBlocks(a.id, b.id, 'double', 'ab');
+    engine.linkBlocks(a.id, c.id, 'single', 'ac');
+
+    const fragment = engine.exportBlocks([a.id, b.id, 'missing']);
+    expect(fragment.blocks.map((block) => block.id)).toEqual([a.id, b.id]);
+    expect(fragment.blocks[0].links).toEqual([
+      { id: b.id, type: 'double', label: 'ab', createdAt: expect.any(String) },
+    ]);
+    expect(JSON.parse(JSON.stringify(fragment)).blocks).toHaveLength(2);
+  });
+
+  it('importBlocks adds copies with fresh ids, offsets, data and links as one undo step', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a', 'note', { x: 0, y: 0 }, { width: 300, height: 120 });
+    const b = engine.createBlock('b', 'task', { x: 400, y: 0 });
+    engine.setBlockData(a.id, { tags: ['x'] });
+    engine.linkBlocks(a.id, b.id, 'single', 'ab');
+    const fragment = engine.exportBlocks([a.id, b.id]);
+    engine.clearHistory();
+
+    const copies = engine.importBlocks(fragment, { offset: { x: 40, y: 40 } });
+    expect(copies).toHaveLength(2);
+    const [a2, b2] = copies;
+    expect(a2.id).not.toBe(a.id);
+    expect(a2.content).toBe('a');
+    expect(a2.type).toBe('note');
+    expect(a2.position).toEqual({ x: 40, y: 40 });
+    expect(a2.size).toEqual({ width: 300, height: 120 });
+    expect(a2.data).toEqual({ tags: ['x'] });
+    expect(a2.data).not.toBe(a.data);
+    expect(engine.getLinkInfo(a2.id, b2.id)).toMatchObject({
+      type: 'single',
+      from: a2.id,
+      to: b2.id,
+      label: 'ab',
+    });
+    expect(engine.getLinkInfo(a2.id, b.id)).toBeNull(); // nothing points at the originals
+    expect(Math.min(a2.zIndex, b2.zIndex)).toBeGreaterThan(Math.max(a.zIndex, b.zIndex));
+    expect(engine.getAllBlocks()).toHaveLength(4);
+
+    engine.undo();
+    expect(engine.getAllBlocks()).toHaveLength(2);
+    expect(engine.canUndo()).toBe(false);
+    engine.redo();
+    expect(engine.getAllBlocks()).toHaveLength(4);
+    expect(engine.getBlock(a2.id).zIndex).toBeGreaterThan(Math.max(a.zIndex, b.zIndex));
+    expect(engine.getLinkInfo(a2.id, b2.id).label).toBe('ab');
+  });
+
+  it('importBlocks accepts JSON text and full exports, and rejects garbage', () => {
+    const engine = new BlockEngine();
+    const a = engine.createBlock('a');
+    const b = engine.createBlock('b');
+    engine.linkBlocks(a.id, b.id, 'double');
+
+    const copies = engine.importBlocks(engine.exportToJSON());
+    expect(copies).toHaveLength(2);
+    expect(engine.getLinkInfo(copies[0].id, copies[1].id).type).toBe('double');
+    expect(engine.getAllBlocks()).toHaveLength(4);
+
+    expect(engine.importBlocks('not json')).toEqual([]);
+    expect(engine.importBlocks({ nope: true })).toEqual([]);
+    expect(engine.importBlocks({ blocks: [null, { content: 'no id' }] })).toEqual([]);
+    expect(engine.getAllBlocks()).toHaveLength(4);
+  });
+});

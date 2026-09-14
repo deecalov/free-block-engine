@@ -39,10 +39,72 @@ export class InteractionController {
     container.addEventListener('pointercancel', () => this.cancelGesture(), { signal });
     container.addEventListener('wheel', (e) => this.onWheel(e), { passive: false, signal });
     container.addEventListener('contextmenu', (e) => this.onContextMenu(e), { signal });
+    container.addEventListener('dblclick', (e) => this.onDoubleClick(e), { signal });
 
     const win = container.ownerDocument.defaultView;
     win.addEventListener('keydown', (e) => this.onKeyDown(e), { signal });
     win.addEventListener('keyup', (e) => this.onKeyUp(e), { signal });
+    win.addEventListener('copy', (e) => this.onCopy(e, false), { signal });
+    win.addEventListener('cut', (e) => this.onCopy(e, true), { signal });
+    win.addEventListener('paste', (e) => this.onPaste(e), { signal });
+  }
+
+  /** Ctrl/Cmd — and Shift, as in most canvas tools — extend the selection. */
+  _isMultiSelect(e) {
+    return Boolean(e.ctrlKey || e.metaKey || e.shiftKey);
+  }
+
+  /**
+   * Double-click on empty canvas creates a block there and opens it for
+   * typing. A double-click on a block belongs to its content editor.
+   * @param {MouseEvent} e
+   */
+  onDoubleClick(e) {
+    const r = this.renderer;
+    if (r.options.readOnly || r.viewMode !== 'free' || this.linking) return;
+    const inWidget = e.target.closest
+      ? e.target.closest('.block, .minimap, .link-editor-popup, .fbe-context-menu')
+      : null;
+    if (inWidget) return;
+    e.preventDefault();
+    r.createBlockAt(r.screenToWorld(e.clientX, e.clientY));
+  }
+
+  // ------------------------------------------------------------ clipboard
+
+  /**
+   * Ctrl+C / Ctrl+X with blocks selected put an exportBlocks() fragment on
+   * the clipboard as text. Left alone while the user is typing or has text
+   * selected on the page, so ordinary copying keeps working.
+   *
+   * @param {ClipboardEvent} e
+   * @param {boolean} cut Delete the selection after copying.
+   */
+  onCopy(e, cut) {
+    const r = this.renderer;
+    if (!r.options.keyboardShortcuts || this._isEditableTarget(e.target)) return;
+    if (r.selectedBlocks.size === 0 || !e.clipboardData) return;
+    const doc = r.container.ownerDocument;
+    const selection = typeof doc.getSelection === 'function' ? doc.getSelection() : null;
+    if (selection && selection.toString().length > 0) return;
+    const text = r.copySelection();
+    if (!text) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
+    if (cut && !r.options.readOnly) r.deleteSelected();
+  }
+
+  /**
+   * Ctrl+V: a copied fragment becomes new blocks, any other text one block.
+   * @param {ClipboardEvent} e
+   */
+  onPaste(e) {
+    const r = this.renderer;
+    if (!r.options.keyboardShortcuts || this._isEditableTarget(e.target)) return;
+    if (r.options.readOnly || r.viewMode !== 'free' || !e.clipboardData) return;
+    const text = e.clipboardData.getData('text/plain');
+    if (!text) return;
+    if (r.paste(text).length > 0) e.preventDefault();
   }
 
   // ------------------------------------------------------------- pointers
@@ -161,7 +223,7 @@ export class InteractionController {
       type: 'lasso',
       startX: e.clientX,
       startY: e.clientY,
-      additive: e.ctrlKey || e.metaKey,
+      additive: this._isMultiSelect(e),
       moved: false,
       el: null,
     };
@@ -233,7 +295,7 @@ export class InteractionController {
     const r = this.renderer;
     switch (g.type) {
       case 'click':
-        r.selectBlock(g.blockId, e.ctrlKey || e.metaKey);
+        r.selectBlock(g.blockId, this._isMultiSelect(e));
         break;
       case 'clearSelect':
         r.clearSelection();
@@ -340,7 +402,8 @@ export class InteractionController {
     e.preventDefault();
     if (r.options.confirmDelete) {
       const win = r.container.ownerDocument.defaultView;
-      const question = count === 1 ? 'Delete this block?' : `Delete ${count} blocks?`;
+      const question =
+        count === 1 ? r.t('confirmDeleteBlock') : r.t('confirmDeleteBlocks', { count });
       if (win && typeof win.confirm === 'function' && !win.confirm(question)) return;
     }
     r.deleteSelected();
@@ -472,7 +535,7 @@ export class InteractionController {
     const r = this.renderer;
     r.guides.hide();
     if (!g.moved) {
-      r.selectBlock(g.blockId, e.ctrlKey || e.metaKey);
+      r.selectBlock(g.blockId, this._isMultiSelect(e));
       return;
     }
     // Grid snapping would immediately undo an alignment to a neighbour that
@@ -508,6 +571,8 @@ export class InteractionController {
       dir: handle.dataset.dir,
       startX: e.clientX,
       startY: e.clientY,
+      startLeft: block.position.x,
+      startTop: block.position.y,
       startWidth: block.size.width,
       startHeight: block.size.height,
       handle,
@@ -516,20 +581,39 @@ export class InteractionController {
     e.preventDefault();
   }
 
+  /**
+   * Handles on the left/top edges move the block so that the opposite edge
+   * stays put; the size is clamped to the engine minimums first so the block
+   * never slides once it cannot shrink further.
+   */
   _moveResize(g, e) {
     const r = this.renderer;
+    const { minBlockWidth, minBlockHeight } = r.engine.settings;
     const zoom = r.camera.zoom;
     const dx = (e.clientX - g.startX) / zoom;
     const dy = (e.clientY - g.startY) / zoom;
+    const dir = g.dir === 'corner' ? 'bottom-right' : g.dir;
     let width = g.startWidth;
     let height = g.startHeight;
-    if (g.dir === 'right' || g.dir === 'corner') {
-      width = Math.max(r.engine.settings.minBlockWidth, g.startWidth + dx);
+    let x = g.startLeft;
+    let y = g.startTop;
+    if (dir.includes('right')) {
+      width = Math.max(minBlockWidth, g.startWidth + dx);
     }
-    if (g.dir === 'bottom' || g.dir === 'corner') {
-      height = Math.max(r.engine.settings.minBlockHeight, g.startHeight + dy);
+    if (dir.includes('bottom')) {
+      height = Math.max(minBlockHeight, g.startHeight + dy);
     }
-    r.setGestureOverride(g.blockId, { width, height });
+    if (dir.includes('left')) {
+      width = Math.max(minBlockWidth, g.startWidth - dx);
+      x = g.startLeft + g.startWidth - width;
+    }
+    if (dir.includes('top')) {
+      height = Math.max(minBlockHeight, g.startHeight - dy);
+      y = g.startTop + g.startHeight - height;
+    }
+    r.setGestureOverride(g.blockId, { x, y, width, height });
+    g.el.style.left = `${x}px`;
+    g.el.style.top = `${y}px`;
     g.el.style.width = `${width}px`;
     g.el.style.height = `${height}px`;
     r.connections.updateForBlock(g.blockId);
@@ -542,7 +626,11 @@ export class InteractionController {
     const override = r.getGestureOverride(g.blockId);
     r.clearGestureOverride(g.blockId);
     if (override && override.width != null) {
+      const moved = override.x !== g.startLeft || override.y !== g.startTop;
+      if (moved) r.engine.beginBatch('resizeBlock');
+      if (moved) r.engine.setBlockPosition(g.blockId, override.x, override.y, false);
       r.engine.setBlockSize(g.blockId, override.width, override.height);
+      if (moved) r.engine.endBatch();
     }
     r.syncBlockGeometry(g.blockId);
     r.minimap.update();
